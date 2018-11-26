@@ -1,178 +1,191 @@
 'use strict';
 const beautify = require('json-beautify');
+const { expect } = require('chai');
+const R = require('ramda');
 const f = o => beautify(o, null, 4, 80);
 const p = o => console.log(f(o));
-const FRAGMENT_TYPE = {
-    RE: 0,
-    NT: 1,
-    COMPOSITE: 2,
-    STRING: 3,
-};
+const {
+    F,
+    parse,
+} = require('./parser.js');
 
-class Fragment {
-    constructor(type, value, modifiers = { times: [1, 1] }) {
-        this.type = type;
-        this.value = value;
-        this.modifiers = modifiers;
-    }
+//const rules = {
+//    additive: [
+//        [F.nt('multitive'), F.nt('additiveSuffix', { times: [1, Infinity] })],
+//    ],
+//    additiveSuffix: [
+//        [F.str('+'), F.nt('additive')],
+//        [],
+//    ],
+//    multitive: [
+//        [F.re('\\d+'), F.nt('multitiveSuffix')],
+//    ],
+//    multitiveSuffix: [
+//        [F.composite([[F.str('*')], [F.str('x')]]), F.nt('multitive')],
+//        [],
+//    ],
+//};
+//const actions = {
+//    additive: ([ multitive, additiveSuffix ]) => multitive.value + additiveSuffix.value,
+//    additiveSuffix: subs => subs.length ? subs[1].value : 0,
+//    multitive: ([number, multitiveSuffix]) => Number.parseInt(number.value) * multitiveSuffix.value,
+//    multitiveSuffix: subs => subs.length ? subs[1].value : 1,
+//};
+//const input = '4*4x2';
+//p(parse('additive', input, rules, actions));
 
-    match(input, pos, actions = {}) {
-        if (this.type === FRAGMENT_TYPE.NT && this.value in memos[pos]) {
-            return memos[pos][this.value];
-        }
-        let totalConsumed = 0;
-        let matchedTimes = 0;
-        const submatches = [];
-        const { modifiers: { times: [low, high] } } = this;
-        while (matchedTimes < high) {
-            const match = this._match(input, pos+totalConsumed);
-            if (match == null) {
-                break;
-            } else {
-                let consumed;
-                if (typeof match === 'object') {
-                    consumed = match.consumed;
-                    const subs = match.submatches;
-                    submatches.splice(submatches.length, 0, ...subs);
-                } else {
-                    consumed = match;
-                    const value = input.slice(pos, pos+consumed);
-                    submatches.push(value);
-                }
-                totalConsumed += consumed;
-                matchedTimes += 1;
-            }
-        }
-        let result;
-        if (matchedTimes >= low) {
-            result = { name: this.value, consumed: totalConsumed, value: submatches };
-            if (this.value in actions) {
-                result.value = actions[this.value](result.value);
-            }
-        } else {
-            result = null;
-        }
-        if (this.type === FRAGMENT_TYPE.NT) {
-            return memoise(this.value, pos, result);
-        } else {
-            return result;
-        }
-    }
-
-    _match(input, pos) {
-        let string = input.slice(pos);
-        let matching, match, total, ruleName;
-        switch (this.type) {
-            case FRAGMENT_TYPE.STRING:
-                return string.startsWith(this.value) ? this.value.length : null;
-
-            case FRAGMENT_TYPE.RE:
-                matching = string.match(this.value);
-                if (!matching) {
-                    return null;
-                }
-                [ match ] = matching;
-                return match.length;
-
-            case FRAGMENT_TYPE.COMPOSITE:
-                total = 0;
-                for (const fragment of this.value) {
-                    const consumed = fragment.match(string);
-                    if (consumed == null) {
-                        return null;
-                    } else {
-                        string = string.slice(consumed);
-                        total += consumed;
-                    }
-                }
-                return total;
-
-            case FRAGMENT_TYPE.NT:
-                for (const option of rules[this.value]) {
-                    let good = true;
-                    const submatches = [];
-                    let start = pos;
-                    for (const fragment of option) {
-                        const match = fragment.match(input, start);
-                        if (match == null) {
-                            good = false;
-                            break;
-                        } else {
-                            const { consumed } = match;
-                            submatches.push(match);
-                            start += consumed;
-                        }
-                    }
-                    if (good) {
-                        const ans = { consumed: start - pos, submatches };
-                        return ans;
-                    } else {
-                        continue;
-                    }
-                }
-                return null;
-
-            default:
-                throw new Error('default case');
-        }
-    }
-
-    static nt(name, mods) {
-        return new Fragment(FRAGMENT_TYPE.NT, name, mods);
-    }
-
-    static re(str, mods) {
-        return new Fragment(FRAGMENT_TYPE.RE, '^' + str, mods);
-    }
-
-    static str(str, mods) {
-        return new Fragment(FRAGMENT_TYPE.STRING, str, mods);
-    }
-}
-
-const F = Fragment;
-
-const rules = {
-    additive: [
-        [F.nt('multitive'), F.nt('additiveSuffix', { times: [1, Infinity] })],
+let rules = {
+    grammar: [
+        [F.nt('whitespace'), F.nt('rule', { times: [1, Infinity] })],
     ],
-    additiveSuffix: [
-        [F.str('+'), F.nt('additive')],
+    identifier: [
+        [F.re('\\w(\\w\\d)*')],
+    ],
+    arrow: [
+        [F.nt('whitespace'), F.str('<-'), F.nt('whitespace')],
+    ],
+    rule: [
+        [F.nt('identifier'), F.nt('ruleSuffix')],
+    ],
+    ruleSuffix: [
+        [F.nt('arrow'), F.nt('ruleRhs')],
+    ],
+    ruleRhs: [
+        [F.nt('ruleOption'), F.nt('ruleRhsSuffix')],
+    ],
+    ruleRhsSuffix: [
+        [F.str('/'), F.nt('ruleOption')],
         [],
     ],
-    multitive: [
-        [F.re('\\d+'), F.nt('multitiveSuffix')],
+    ruleOption: [
+        [F.str('epsilon')],
+        [F.nt('fragment'), F.nt('ruleOptionSuffix')],
     ],
-    multitiveSuffix: [
-        [F.str('*'), F.nt('multitive')],
-        [],
+    ruleOptionSuffix: [
+        [F.nt('whitespace'), F.nt('ruleOption')],
+        [F.nt('whitespace')],
+    ],
+    fragment: [
+        [
+            F.composite([
+                [F.nt('identifier'), F.nt('arrow')],
+            ], { la: false }),
+            F.composite([
+                [F.str('!'), F.nt('fragment')],
+                [F.str('&'), F.nt('fragment')],
+                [F.nt('composite')],
+                [F.nt('nonterminal')],
+                [F.nt('string')],
+                [F.nt('re')],
+            ]),
+        ],
+    ],
+    composite: [
+        [F.str('('), F.nt('ruleOption'), F.str(')')],
+    ],
+    nonterminal: [
+        [F.nt('identifier')],
+    ],
+    string: [
+        [F.str("'"), F.nt('chars'), F.str("'")],
+    ],
+    chars: [
+        [F.re(`[^"']+`)],
+    ],
+    re: [
+        [F.str('/'), F.re('[^/]'), F.str('/')],
+    ],
+    whitespace: [
+        [F.re('\\s*')],
+    ],
+    break: [
+        [F.re('\\s+')],
     ],
 };
-const actions = {
-    additive: ([ multitive, additiveSuffix ]) => multitive.value + additiveSuffix.value,
-    additiveSuffix: subs => subs.length ? subs[1].value : 0,
-    multitive: ([number, multitiveSuffix]) => Number.parseInt(number.value) * multitiveSuffix.value,
-    multitiveSuffix: subs => subs.length ? subs[1].value : 1,
+const first = subs => subs[0].value;
+const second = subs => subs[1].value;
+const third = subs => subs[2].value;
+const ignore = subs => null;
+let actions = {
+    composite: subs => F.composite(subs[1].value),
+    nonterminal: subs => F.nt(subs[0].value),
+    string: subs => F.str(subs[1].value),
+    re: subs => F.re(subs[1].value),
+    fragment: subs => {
+        if (subs.length === 1) {
+            return first(subs);
+        } else if (subs[0].name === '!') {
+            const fragment =  subs[1].value;
+            fragment.modifiers.la = !fragment.modifiers.la;
+        } else if (subs[1].name === '&') {
+            const fragment =  subs[1].value;
+            fragment.modifiers.la = true;
+        } else {
+            p(subs);
+            throw new Error('unexpected');
+        }
+    },
+    whitespace: ignore,
+    identifier: first,
+
+    grammar: subs => R.fromPairs(subs.slice(1).map(s => s.value)),
+    rule: subs => subs.map(s => s.value),
+    ruleSuffix: second,
+    ruleRhs: subs => [subs[0].value, ...subs[1].value],
+    ruleRhsSuffix: subs => {
+        if (subs.length === 0) {
+            return [];
+        } else {
+            return second(subs);
+        }
+    },
+    ruleOption: subs => {
+        if (subs.length === 1) {
+            return [];
+        } else {
+            return [subs[0].value, ...subs[1].value];
+        }
+    },
+    ruleOptionSuffix: subs => {
+        if (subs.length === 2) {
+            return second(subs);
+        } else {
+            return [];
+        }
+    },
 };
 
-const order = ['multitiveSuffix', 'additiveSuffix', 'multitive', 'additive'];
-const NTs = order.map(nt => F.nt(nt));
+//const input = `
+//additive<-multitive additiveSuffix
+//
+//additiveSuffix<-'+' additive/epsilon
+//
+//multitive<-/\d+/ multitiveSuffix
+//
+//multitiveSuffix<-('*'/'x') multitive
+//     / epsilon
+//`;
+let input = `
+a <- 'a' 'b'
+b <- 'b' 'a'
+`;
+//actions = R.mapObjIndexed(k => () => null, actions);
 
-const input = '1+2+3+4*3';
 
-// Init cache
-const memos = [{}];
-for (const ch of input) {
-    memos.push({});
-}
-function memoise(ruleName, pos, answer) {
-    memos[pos][ruleName] = answer;
-    return answer;
-}
+input = 'aa';
+rules = {
+    s: [
+        [F.nt('a', { times: [1, Infinity] })],
+    ],
+    a: [
+        [
+            F.str('b', { la: false }),
+            F.str('a'),
+        ],
+    ],
+};
 
-for (let i = input.length; i >= 0; i--) {
-    for (const nt of NTs) {
-        nt.match(input, i, actions);
-    }
-}
-p(memos[0].additive);
+
+
+const parsed = parse('grammar', input, rules, {});
+p(parsed);

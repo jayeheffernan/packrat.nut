@@ -10,6 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "chai": "^4.2.0",
-    "json-beautify": "^1.0.1"
+    "json-beautify": "^1.0.1",
+    "ramda": "^0.26.0"
   }
 }
