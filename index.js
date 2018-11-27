@@ -36,10 +36,10 @@ const {
 
 let rules = {
     grammar: [
-        [F.nt('whitespace'), F.nt('rule', { times: [1, Infinity] })],
+        [F.nt('whitespace'), F.rep(F.nt('rule'), 1)],
     ],
     identifier: [
-        [F.re('\\w(\\w\\d)*')],
+        [F.re('\\w+')],
     ],
     arrow: [
         [F.nt('whitespace'), F.str('<-'), F.nt('whitespace')],
@@ -48,13 +48,13 @@ let rules = {
         [F.nt('identifier'), F.nt('ruleSuffix')],
     ],
     ruleSuffix: [
-        [F.nt('arrow'), F.nt('ruleRhs')],
+        [F.nt('arrow'), F.nt('ruleRhs'), F.nt('whitespace')],
     ],
     ruleRhs: [
         [F.nt('ruleOption'), F.nt('ruleRhsSuffix')],
     ],
     ruleRhsSuffix: [
-        [F.str('/'), F.nt('ruleOption')],
+        [F.str('/'), F.nt('ruleRhs')],
         [],
     ],
     ruleOption: [
@@ -62,14 +62,12 @@ let rules = {
         [F.nt('fragment'), F.nt('ruleOptionSuffix')],
     ],
     ruleOptionSuffix: [
-        [F.nt('whitespace'), F.nt('ruleOption')],
-        [F.nt('whitespace')],
+        [F.nt('break'), F.nt('ruleOption')],
+        [],
     ],
     fragment: [
         [
-            F.composite([
-                [F.nt('identifier'), F.nt('arrow')],
-            ], { la: false }),
+            F.nla(F.composite([ [F.nt('identifier'), F.nt('arrow')] ])),
             F.composite([
                 [F.str('!'), F.nt('fragment')],
                 [F.str('&'), F.nt('fragment')],
@@ -102,90 +100,61 @@ let rules = {
         [F.re('\\s+')],
     ],
 };
-const first = subs => subs[0].value;
-const second = subs => subs[1].value;
-const third = subs => subs[2].value;
-const ignore = subs => null;
-let actions = {
-    composite: subs => F.composite(subs[1].value),
-    nonterminal: subs => F.nt(subs[0].value),
-    string: subs => F.str(subs[1].value),
-    re: subs => F.re(subs[1].value),
-    fragment: subs => {
-        if (subs.length === 1) {
-            return first(subs);
-        } else if (subs[0].name === '!') {
-            const fragment =  subs[1].value;
-            fragment.modifiers.la = !fragment.modifiers.la;
-        } else if (subs[1].name === '&') {
-            const fragment =  subs[1].value;
-            fragment.modifiers.la = true;
-        } else {
-            p(subs);
-            throw new Error('unexpected');
-        }
-    },
+const first =  match => match.value[0];
+const second = match => match.value[1];
+const third =  match => match.value[2];
+const ignore = match => null;
+const actions = {
     whitespace: ignore,
-    identifier: first,
-
-    grammar: subs => R.fromPairs(subs.slice(1).map(s => s.value)),
-    rule: subs => subs.map(s => s.value),
-    ruleSuffix: second,
-    ruleRhs: subs => [subs[0].value, ...subs[1].value],
-    ruleRhsSuffix: subs => {
-        if (subs.length === 0) {
+    chars: first,
+    string: match => F.str(match.value[1].value),
+    fragment: match => {
+        const composite = match.value[1];
+        expect(composite.value).to.be.an('array').of.length(1);
+        return composite.value[0].value;
+    },
+    ruleOption: match => {
+        if (match.alternative === 0) {
             return [];
         } else {
-            return second(subs);
+            const fragment = match.value[0].value;
+            const rest = match.value[1].value;
+            return [fragment, ...rest];
         }
     },
-    ruleOption: subs => {
-        if (subs.length === 1) {
-            return [];
-        } else {
-            return [subs[0].value, ...subs[1].value];
+    ruleOptionSuffix: match => {
+        switch (match.alternative) {
+            case 0:
+                return match.value[1].value;
+            case 1:
+                return [];
+            default:
+                throw new Error('unexpected');
         }
     },
-    ruleOptionSuffix: subs => {
-        if (subs.length === 2) {
-            return second(subs);
-        } else {
-            return [];
+    ruleRhs: match => {
+        const ruleOption = match.value[0].value;
+        const rest = match.value[1].value;
+        return [ruleOption, ...rest];
+    },
+    ruleRhsSuffix: match => {
+        switch (match.alternative) {
+            case 0:
+                return match.value[1].value;
+            case 1:
+                return [];
+            default:
+                throw new Error('unexpected');
         }
     },
+    ruleSuffix: match => match.value[1].value,
+    identifier: match => match.value[0],
+    rule: match => ({ [match.value[0].value]: match.value[1].value }),
+    grammar: match => R.mergeAll(match.value[1].value.map(submatch => submatch.value)),
 };
 
-//const input = `
-//additive<-multitive additiveSuffix
-//
-//additiveSuffix<-'+' additive/epsilon
-//
-//multitive<-/\d+/ multitiveSuffix
-//
-//multitiveSuffix<-('*'/'x') multitive
-//     / epsilon
-//`;
 let input = `
-a <- 'a' 'b'
-b <- 'b' 'a'
+a <- 'b'/'c'
 `;
-//actions = R.mapObjIndexed(k => () => null, actions);
-
-
-input = 'aa';
-rules = {
-    s: [
-        [F.nt('a', { times: [1, Infinity] })],
-    ],
-    a: [
-        [
-            F.str('b', { la: false }),
-            F.str('a'),
-        ],
-    ],
-};
-
-
-
-const parsed = parse('grammar', input, rules, {});
+const parsed = parse('grammar', input, rules, actions);
 p(parsed);

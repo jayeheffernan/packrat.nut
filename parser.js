@@ -8,78 +8,58 @@ const FRAGMENT_TYPE = {
     NT: 1,
     COMPOSITE: 2,
     STRING: 3,
+    REPETITION: 4,
+    LOOKAHEAD: 5,
+    NEGATIVE_LOOKAHEAD: 6,
 };
 
 class Fragment {
-    constructor(type, value, modifiers = {}) {
+    constructor(type, value) {
+        this._fragment = true;
         this.type = type;
         this.value = value;
-        this.modifiers = R.merge({
-            times: [1, 1],
-        }, modifiers);
     }
 
-    match(input, pos, rules, memos, actions = {}) {
+    match(input, pos, rules, memos, actions = {}, post = {}) {
         if (this.type === FRAGMENT_TYPE.NT && this.value in memos[pos]) {
             return memos[pos][this.value];
         }
-        let totalConsumed = 0;
-        let matchedTimes = 0;
-        const submatches = [];
-        const { modifiers: { times: [low, high] } } = this;
-        while (matchedTimes < high) {
-            const match = this._match(input, pos+totalConsumed, rules, memos, actions);
-            if (match == null) {
-                break;
+        const match = this._match(input, pos, rules, memos, actions, post);
+        let result;
+        if (match == null) {
+            return null;
+        } else {
+            if (typeof match === 'number') {
+                const consumed = match;
+                result = { consumed, value: input.slice(pos, pos+consumed) };
             } else {
-                let consumed;
-                if (this.type === FRAGMENT_TYPE.NT) {
-                    consumed = match.consumed;
-                    const subs = match.submatches;
-                    submatches.push(subs);
-//                    submatches.splice(submatches.length, 0, ...subs);
-                } else if (this.type === FRAGMENT_TYPE.COMPOSITE) {
-                    consumed = match.consumed;
-                    const subs = match.submatches;
-                    submatches.splice(submatches.length, 0, ...subs);
-                } else {
-                    consumed = match;
-                    const value = input.slice(pos, pos+consumed);
-                    submatches.push(value);
-                }
-                totalConsumed += consumed;
-                matchedTimes += 1;
+                expect(match).to.have.property('value');
+                expect(match).to.have.property('consumed').that.is.a('number');
+                result = match;
             }
         }
+        result.type = this.type;
 
-        let result = null;
-        if (matchedTimes >= low) {
-            result = { name: this.value, consumed: totalConsumed, value: submatches };
-            if (this.type === FRAGMENT_TYPE.NT && this.value in actions) {
-                result.value = actions[this.value](result.value);
-            } else if ([FRAGMENT_TYPE.RE, FRAGMENT_TYPE.STRING].includes(this.type)) {
-                expect(result.value).to.be.an('array').of.length(1);
-                result.value = result.value[0];
+        if (this.type === FRAGMENT_TYPE.NT) {
+            result.name = this.value;
+            if (this.value in actions) {
+                result.value = actions[this.value](result);
             }
+//        } else if ([FRAGMENT_TYPE.STRING, FRAGMENT_TYPE.RE].includes(this.type) && this.type in actions) {
+//                result.value = actions[this.value](result.value);
         }
 
         if (this.type === FRAGMENT_TYPE.NT) {
             memos[pos][this.value] = result;
         }
-        // TODO combine these again
-        if (this.modifiers.la != null) {
-            if (result == null && this.modifiers.la === false) {
-                result = { name: this.value, value: [], consumed: 0 };
-            } else if (result != null && this.modifiers.la === true) {
-                result = { name: this.value, value: [], consumed: 0 };
-            }
-        }
+        expect(result).to.have.property('value');
+        expect(result).to.have.property('consumed').that.is.a('number');
         return result;
     }
 
-    _match(input, pos, rules, memos, actions) {
+    _match(input, pos, rules, memos, actions, post) {
         let string = input.slice(pos);
-        let matching, match, total, ruleName;
+        let matching, match, total, ruleName, options;
         switch (this.type) {
             case FRAGMENT_TYPE.STRING:
                 return string.startsWith(this.value) ? this.value.length : null;
@@ -93,7 +73,11 @@ class Fragment {
                 return match.length;
 
             case FRAGMENT_TYPE.COMPOSITE:
-                for (const option of this.value) {
+                options = this.value;
+            case FRAGMENT_TYPE.NT:
+                options = options || rules[this.value];
+                for (let i = 0; i < options.length; i++) {
+                    const option = options[i];
                     let good = true;
                     const submatches = [];
                     let start = pos;
@@ -103,13 +87,15 @@ class Fragment {
                             good = false;
                             break;
                         } else {
-                            const { consumed } = match;
-                            submatches.push(match);
+                            const { consumed, value } = match;
+                            expect(consumed).to.be.a('number');
+                            // TODO make this configureable?  Like `actions`?
+                            submatches.push(this._post(match));
                             start += consumed;
                         }
                     }
                     if (good) {
-                        const ans = { consumed: start - pos, submatches };
+                        const ans = { consumed: start - pos, value: submatches, alternative: i };
                         return ans;
                     } else {
                         continue;
@@ -117,54 +103,92 @@ class Fragment {
                 }
                 return null;
 
-            case FRAGMENT_TYPE.NT:
-                for (const option of rules[this.value]) {
-                    let good = true;
-                    const submatches = [];
-                    let start = pos;
-                    for (const fragment of option) {
-                        const match = fragment.match(input, start, rules, memos, actions);
-                        if (match == null) {
-                            good = false;
-                            break;
-                        } else if (fragment.type === FRAGMENT_TYPE.COMPOSITE) {
-                            const { consumed, value } = match;
-                            submatches.splice(submatches.length, 0, ...value);
-                            start += consumed;
-                        } else {
-                            const { consumed } = match;
-                            submatches.push(match);
-                            start += consumed;
-                        }
-                    }
-                    if (good) {
-                        const ans = { consumed: start - pos, submatches };
-                        return ans;
+            case FRAGMENT_TYPE.REPETITION:
+                const { fragment, low, high } = this.value;
+                let matches = 0;
+                const submatches = [];
+                let offset = 0;
+                while (matches < high) {
+                    const match = fragment.match(input, pos+offset, rules, memos, actions);
+                    if (match == null) {
+                        break;
                     } else {
-                        continue;
+                        matches += 1;
+                        offset += match.consumed;
+                        submatches.push(match);
                     }
                 }
-                return null;
+                if (matches >= low) {
+                    return { consumed: offset, value: submatches, times: matches };
+                } else {
+                    return null;
+                }
+
+            case FRAGMENT_TYPE.LOOKAHEAD:
+                match = this.value.match(input, pos, rules, memos, actions);
+                if (match) {
+                    // TODO is this good enough?  How to do it in Squirrel?  We don't want this value being modified accidentally
+                    const result = R.clone(match);
+                    result.consumed = 0;
+                    result.value = [];
+                    return result;
+                } else {
+                    return null;
+                }
+
+            case FRAGMENT_TYPE.NEGATIVE_LOOKAHEAD:
+                match = this.value.match(input, pos, rules, memos, actions);
+                if (match) {
+                    return null;
+                } else {
+                    const result = { name: this.value.value, consumed: 0, value: [] };
+                    return result;
+                }
 
             default:
                 throw new Error('default case');
         }
     }
 
-    static nt(name, mods) {
-        return new Fragment(FRAGMENT_TYPE.NT, name, mods);
+    // Post-processing (after cache, before adding to parse tree)
+    // TODO we should have this take the match and the array of submatches to be inserted into
+    // that way we can drop values (e.g. for lookaheads)
+    _post(match) {
+        expect(match).to.be.an('object').that.include.all.keys(['consumed', 'type', 'value']);
+        if ([FRAGMENT_TYPE.STRING, FRAGMENT_TYPE.RE].includes(match.type)) {
+            return match.value;
+        } else if ([FRAGMENT_TYPE.LOOKAHEAD, FRAGMENT_TYPE.NEGATIVE_LOOKAHEAD].includes(match.type)) {
+        } else {
+            return match;
+        }
     }
 
-    static re(str, mods) {
-        return new Fragment(FRAGMENT_TYPE.RE, '^' + str, mods);
+    static nt(name) {
+        return new Fragment(FRAGMENT_TYPE.NT, name);
     }
 
-    static str(str, mods) {
-        return new Fragment(FRAGMENT_TYPE.STRING, str, mods);
+    static re(str) {
+        return new Fragment(FRAGMENT_TYPE.RE, '^' + str);
     }
 
-    static composite(opts, mods) {
-        return new Fragment(FRAGMENT_TYPE.COMPOSITE, opts, mods);
+    static str(str) {
+        return new Fragment(FRAGMENT_TYPE.STRING, str);
+    }
+
+    static composite(opts) {
+        return new Fragment(FRAGMENT_TYPE.COMPOSITE, opts);
+    }
+
+    static rep(fragment, low=0, high=Infinity) {
+        return new Fragment(FRAGMENT_TYPE.REPETITION, { fragment, low, high });
+    }
+
+    static la(fragment) {
+        return new Fragment(FRAGMENT_TYPE.LOOKAHEAD, fragment);
+    }
+
+    static nla(fragment) {
+        return new Fragment(FRAGMENT_TYPE.NEGATIVE_LOOKAHEAD, fragment);
     }
 }
 
@@ -185,7 +209,6 @@ function parse(ruleName, input, rules, actions) {
     }
 
     const match = memos[0][ruleName];
-    p(memos[0]);
     if (match && match.consumed === input.length) {
         return match.value;
     } else {
