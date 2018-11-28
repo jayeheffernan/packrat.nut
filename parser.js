@@ -46,8 +46,6 @@ class Fragment {
             if (this.value in actions) {
                 result.value = actions[this.value](result);
             }
-//        } else if ([FRAGMENT_TYPE.STRING, FRAGMENT_TYPE.RE].includes(this.type) && this.type in actions) {
-//                result.value = actions[this.value](result.value);
         }
 
         if (this.type === FRAGMENT_TYPE.NT) {
@@ -350,8 +348,6 @@ function parse(ruleName, input, rules, actions) {
             throw new Error('bad grammar');
         }
     }
-    const NTs = Object.keys(rules).map(nt => Fragment.nt(nt));
-    rules._ = [[Fragment.nt(ruleName)]];
 
     // Init cache
     const memos = [];
@@ -359,11 +355,8 @@ function parse(ruleName, input, rules, actions) {
         memos.push({});
     }
 
-    for (let i = input.length; i >= 0; i--) {
-        for (const nt of NTs) {
-            nt.match(input, i, rules, memos, actions);
-        }
-    }
+    const start = Fragment.nt(ruleName);
+    start.match(input, 0, rules, memos, actions);
 
     const match = memos[0][ruleName];
     if (match && match.consumed === input.length) {
