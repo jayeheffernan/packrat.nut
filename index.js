@@ -11,16 +11,16 @@ const {
 
 // Define our grammar
 const grammar = `
-document  <-  __ (object | array) __
-object    <-  '{' pair (',' pair)* '}' | '{' __ '}'
+document  <-  __ (object / array) __
+object    <-  '{' pair (',' pair)* '}' / '{' __ '}'
 pair      <-  __ string __ ':' value
-array     <-  '[' value (',' value)* ']' | '[' __ ']'
-value     <-  __ (object | array | string | number | boolean_ | null_) __
-string    <-  '"' ('\\' /./ | /[^"]/)* '"'
-number    <-  '-'? ('0' | /[1-9][0-9]*/) ('.' /[0-9]+/)? (('e' | 'E') ('+' | '-' | '') /[0-9]+/)?
-boolean_  <-  'true' | 'false'
+array     <-  '[' value (',' value)* ']' / '[' __ ']'
+value     <-  __ (object / array / string / number / boolean_ / null_) __
+string    <-  '"' ('\\' m/./ / m/[^"]/)* '"'
+number    <-  '-'? ('0' / m/[1-9][0-9]*/) ('.' m/[0-9]+/)? (('e' / 'E') ('+' / '-' / '') m/[0-9]+/)?
+boolean_  <-  'true' / 'false'
 null_     <-  'null'
-__        <-  /\\s*/
+__        <-  m/\\s*/
 `;
 
 // Define our actions
@@ -28,6 +28,7 @@ const actions = {
     null_: match => null, // this time we actually want the value `null`
     boolean_: match => match.value[0] === 'true' ? true : false,
     number: match => Number.parseFloat(input.slice(match.start, match.start+match.consumed)),
+    // TODO: does not support unicode escape sequences (probably)
     string: match => match.value[1].value.map(charMatch => {
         if (charMatch.alternative === 0) {
             // handles escape codes

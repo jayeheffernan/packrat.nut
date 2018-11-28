@@ -199,7 +199,7 @@ const grammarRules = {
         [F.nt('whitespace'), F.rep(F.nt('rule'), 1)],
     ],
     identifier: [
-        [F.re('(\\w|\\d|_)+')],
+        [F.rep(F.composite([ [F.nla(F.str('m/')), F.re('[a-zA-Z0-9_]')] ]), 1)],
     ],
     arrow: [
         [F.nt('whitespace'), F.str('<-'), F.nt('whitespace')],
@@ -214,7 +214,7 @@ const grammarRules = {
         [F.nt('ruleOption'), F.nt('ruleRhsSuffix')],
     ],
     ruleRhsSuffix: [
-        [F.nt('whitespace'), F.str('|'), F.nt('whitespace'), F.nt('ruleRhs')],
+        [F.nt('whitespace'), F.str('/'), F.nt('whitespace'), F.nt('ruleRhs')],
         [],
     ],
     ruleOption: [
@@ -237,8 +237,8 @@ const grammarRules = {
     normalFragment: [
         [F.str('!'), F.nt('fragment')],
         [F.str('&'), F.nt('fragment')],
-        [F.nt('composite')],
         [F.nt('nonterminal')],
+        [F.nt('composite')],
         [F.nt('string')],
         [F.nt('re')],
     ],
@@ -258,7 +258,7 @@ const grammarRules = {
         [F.re(`[^']*`)],
     ],
     re: [
-        [F.str('/'), F.re('[^/]+'), F.str('/')],
+        [F.str('m/'), F.re('[^/]+'), F.str('/')],
     ],
     whitespace: [
         [F.re('\\s*')],
@@ -336,7 +336,7 @@ const grammarActions = {
         }
     },
     ruleSuffix: match => match.value[1].value,
-    identifier: match => match.value[0],
+    identifier: match => match.value[0].value.map(sub => sub.value[1]).join(''),
     rule: match => ({ [match.value[0].value]: match.value[1].value }),
     grammar: match => R.mergeAll(match.value[1].value.map(submatch => submatch.value)),
 };
