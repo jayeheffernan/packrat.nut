@@ -4,13 +4,13 @@ const R = require('ramda');
 const f = o => beautify(o, null, 4, 80);
 const p = o => console.log(f(o));
 const FRAGMENT_TYPE = {
-    RE: 0,
-    NT: 1,
-    COMPOSITE: 2,
-    STRING: 3,
-    REPETITION: 4,
-    LOOKAHEAD: 5,
-    NEGATIVE_LOOKAHEAD: 6,
+    NT: 0,
+    STRING: 1,
+    RE: 2,
+    COMPOSITE: 3,
+    LOOKAHEAD: 4,
+    NEGATIVE_LOOKAHEAD: 5,
+    REPETITION: 6,
 };
 
 class Fragment {
@@ -108,11 +108,12 @@ class Fragment {
                 let matches = 0;
                 const submatches = [];
                 let offset = 0;
-                while (matches < high) {
+                while (matches <= high) {
                     const match = fragment.match(input, pos+offset, rules, memos, actions);
                     if (match == null) {
                         break;
                     } else {
+                        expect(match).to.be.an('object').that.has.property('consumed').that.is.a('number');
                         matches += 1;
                         offset += match.consumed;
                         submatches.push(match);
@@ -158,6 +159,7 @@ class Fragment {
         if ([FRAGMENT_TYPE.STRING, FRAGMENT_TYPE.RE].includes(match.type)) {
             return match.value;
         } else if ([FRAGMENT_TYPE.LOOKAHEAD, FRAGMENT_TYPE.NEGATIVE_LOOKAHEAD].includes(match.type)) {
+            return null;
         } else {
             return match;
         }
@@ -191,8 +193,162 @@ class Fragment {
         return new Fragment(FRAGMENT_TYPE.NEGATIVE_LOOKAHEAD, fragment);
     }
 }
+const F = Fragment;
+
+const grammarRules = {
+    grammar: [
+        [F.nt('whitespace'), F.rep(F.nt('rule'), 1)],
+    ],
+    identifier: [
+        [F.re('\\w+')],
+    ],
+    arrow: [
+        [F.nt('whitespace'), F.str('<-'), F.nt('whitespace')],
+    ],
+    rule: [
+        [F.nt('identifier'), F.nt('ruleSuffix')],
+    ],
+    ruleSuffix: [
+        [F.nt('arrow'), F.nt('ruleRhs'), F.nt('whitespace')],
+    ],
+    ruleRhs: [
+        [F.nt('ruleOption'), F.nt('ruleRhsSuffix')],
+    ],
+    ruleRhsSuffix: [
+        [F.nt('whitespace'), F.str('|'), F.nt('whitespace'), F.nt('ruleRhs')],
+        [],
+    ],
+    ruleOption: [
+        [F.str('epsilon')],
+        [F.nt('fragment'), F.nt('ruleOptionSuffix')],
+    ],
+    ruleOptionSuffix: [
+        [F.nt('break'), F.nt('fragment'), F.nt('ruleOptionSuffix')],
+        [],
+    ],
+    fragment: [
+        [
+            F.nla(F.composite([ [F.nt('identifier'), F.nt('arrow')] ])),
+            F.composite([
+                [F.nt('repetition')],
+                [F.nt('normalFragment')],
+            ]),
+        ],
+    ],
+    normalFragment: [
+        [F.str('!'), F.nt('fragment')],
+        [F.str('&'), F.nt('fragment')],
+        [F.nt('composite')],
+        [F.nt('nonterminal')],
+        [F.nt('string')],
+        [F.nt('re')],
+    ],
+    repetition: [
+        [F.nt('normalFragment'), F.composite([[F.str('?')], [F.str('*')], [F.str('+')]])],
+    ],
+    composite: [
+        [F.str('('), F.nt('ruleRhs'), F.str(')')],
+    ],
+    nonterminal: [
+        [F.nt('identifier')],
+    ],
+    string: [
+        [F.str("'"), F.nt('chars'), F.str("'")],
+    ],
+    chars: [
+        [F.re(`[^"']+`)],
+    ],
+    re: [
+        [F.str('/'), F.re('[^/]+'), F.str('/')],
+    ],
+    whitespace: [
+        [F.re('\\s*')],
+    ],
+    break: [
+        [F.re('\\s+')],
+    ],
+};
+const grammarActions = {
+    whitespace: match => null,
+    chars: match => match.value[0],
+    string: match => F.str(match.value[1].value),
+    nonterminal: match => F.nt(match.value[0].value),
+    re: match => F.re(match.value[1]),
+    composite: match => {
+        return F.composite(match.value[1].value);
+    },
+    repetition: match => {
+        expect(match.value).to.be.an('array').of.length(2);
+        expect(match.value[1].value).to.be.an('array').of.length(1);
+        const fragment = match.value[0].value;
+        const repChar = match.value[1].value[0];
+        const times = { "?": [0, 1], "*": [0, Infinity], "+": [1, Infinity] }[repChar];
+        return F.rep(fragment, times[0], times[1]);
+    },
+    fragment: match => {
+        const composite = match.value[1];
+        expect(composite.value).to.be.an('array').of.length(1);
+        return composite.value[0].value;
+    },
+    normalFragment: match => {
+        const fragment = match.value[match.value.length-1].value;
+        if (match.alternative === 0) {
+            return F.nla(fragment);
+        } else if (match.alternative === 1) {
+            return F.la(fragment);
+        } else {
+            return fragment;
+        }
+    },
+    ruleOption: match => {
+        if (match.alternative === 0) {
+            return [];
+        } else {
+            const fragment = match.value[0].value;
+            const rest = match.value[1].value;
+            return [fragment, ...rest];
+        }
+    },
+    ruleOptionSuffix: match => {
+        switch (match.alternative) {
+            case 0:
+                const fragment = match.value[1].value;
+                const rest = match.value[2].value;
+                return [fragment, ...rest];
+            case 1:
+                return [];
+            default:
+                throw new Error('unexpected');
+        }
+    },
+    ruleRhs: match => {
+        const ruleOption = match.value[0].value;
+        const rest = match.value[1].value;
+        return [ruleOption, ...rest];
+    },
+    ruleRhsSuffix: match => {
+        switch (match.alternative) {
+            case 0:
+                return match.value[3].value;
+            case 1:
+                return [];
+            default:
+                throw new Error('unexpected');
+        }
+    },
+    ruleSuffix: match => match.value[1].value,
+    identifier: match => match.value[0],
+    rule: match => ({ [match.value[0].value]: match.value[1].value }),
+    grammar: match => R.mergeAll(match.value[1].value.map(submatch => submatch.value)),
+};
 
 function parse(ruleName, input, rules, actions) {
+    if (typeof rules === 'string') {
+        rules = parse('grammar', rules, grammarRules, grammarActions);
+        if (!rules) {
+            throw new Error('bad grammar');
+        }
+    }
     const NTs = Object.keys(rules).map(nt => Fragment.nt(nt));
     rules._ = [[Fragment.nt(ruleName)]];
 
@@ -219,6 +375,6 @@ function parse(ruleName, input, rules, actions) {
 module.exports = {
     FRAGMENT_TYPE,
     Fragment,
-    F: Fragment,
+    F,
     parse,
 };
