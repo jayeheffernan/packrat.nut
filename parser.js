@@ -39,6 +39,7 @@ class Fragment {
             }
         }
         result.type = this.type;
+        result.start = pos;
 
         if (this.type === FRAGMENT_TYPE.NT) {
             result.name = this.value;
@@ -200,7 +201,7 @@ const grammarRules = {
         [F.nt('whitespace'), F.rep(F.nt('rule'), 1)],
     ],
     identifier: [
-        [F.re('\\w+')],
+        [F.re('(\\w|\\d|_)+')],
     ],
     arrow: [
         [F.nt('whitespace'), F.str('<-'), F.nt('whitespace')],
@@ -256,7 +257,7 @@ const grammarRules = {
         [F.str("'"), F.nt('chars'), F.str("'")],
     ],
     chars: [
-        [F.re(`[^"']+`)],
+        [F.re(`[^']*`)],
     ],
     re: [
         [F.str('/'), F.re('[^/]+'), F.str('/')],
