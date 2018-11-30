@@ -1,0 +1,5 @@
+{
+  "deviceGroupId": "774e3797-99af-43b8-9945-dc3ab4288b6f",
+  "deviceFile": "builds/device.nut",
+  "agentFile": "builds/agent.nut"
+}
