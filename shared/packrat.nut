@@ -5,8 +5,19 @@ enum SYMBOL_TYPE {
     COMPOSITE,
     LOOKAHEAD,
     NEGATIVE_LOOKAHEAD,
-    REPETITION
+    REPETITION,
+    POSITION_ASSERTION,
+    BOOLEAN,
+    // TODO add another type: "function"
 };
+enum STATEMENT_TYPE {
+    RULE,
+    DISCARD_NT,
+    DISCARD_STRINGS,
+    DISCARD_REGEXPS,
+    NO_DISCARD_LOOKAHEADS,
+}
+PACKRAT_DROP <- [];
 
 class Match {
     t = null;
@@ -14,9 +25,9 @@ class Match {
     l = null;
     v = null;
 
-    nt = null; // For NTs only
+    nt  = null; // For NTs only
     alt = null; // For COMPOSITE and NTs only
-    n = null; // For REPETITIONs only
+    n   = null; // For REPETITIONs only
 
     _input = null;
 
@@ -47,17 +58,19 @@ class Match {
 class Symbol {
     t = null;
     v = null;
+    _keep = null;
 
-    constructor(t_, v_) {
+    constructor(t_, v_, drop=null) {
         t  = t_;
         v = v_;
+        _keep = drop == null ? null : !drop;
     }
 
-    function match(input, pos, rules, memos, actions = {}, post = {}) {
+    function match(input, pos, grammar, actions, memos, state = {}) {
         if (t == SYMBOL_TYPE.NT && v in memos[pos]) {
             return memos[pos][v];
         }
-        local match = _match(input, pos, rules, memos, actions, post);
+        local match = _match(input, pos, grammar, actions, memos, state);
         if (match == null) {
             return null;
         }
@@ -65,11 +78,13 @@ class Symbol {
         match.t = t;
         match.s = pos;
 
-        if (t == SYMBOL_TYPE.NT && match.nt in actions) {
+        if (t == SYMBOL_TYPE.NT && v in actions) {
             match.v = actions[v](match);
         }
 
         if (t == SYMBOL_TYPE.NT) {
+            // TODO don't do this if the result is about to be dropped?  Think
+            // about effect on cache
             memos[pos][v] <- match;
         }
         assert(match.l != null);
@@ -77,8 +92,9 @@ class Symbol {
         return match;
     }
 
-    function _match(input, pos, rules, memos, actions, post) {
+    function _match(input, pos, grammar, actions, memos, state) {
         local matching, match, total, ruleName, options;
+        // TODO change this to if-elses
         switch (t) {
             case SYMBOL_TYPE.STRING:
                 if (strmatch(input, v, pos)) {
@@ -88,7 +104,6 @@ class Symbol {
                 }
 
             case SYMBOL_TYPE.RE:
-                //if (input == ::input) server.log("searching " + pos);
                 matching = v.search(input, pos);
                 if (!matching) return null;
                 assert(matching.begin == pos);
@@ -97,14 +112,19 @@ class Symbol {
             case SYMBOL_TYPE.COMPOSITE:
                 options = v;
             case SYMBOL_TYPE.NT:
-                options = options || rules[v];
+                options = options ||  grammar.rules[v];
                 for (local i = 0; i < options.len(); i++) {
                     local option = options[i];
                     local good = true;
                     local submatches = [];
                     local s = pos;
+                    assert(typeof option == "array");
                     foreach (sym in option) {
-                        local match = sym.match(input, s, rules, memos, actions);
+                        if (!(sym instanceof Symbol)) {
+                            print(sym);
+                        }
+                        assert(sym instanceof Symbol);
+                        local match = sym.match(input, s, grammar, actions, memos, state);
                         if (match == null) {
                             good = false;
                             break;
@@ -112,7 +132,7 @@ class Symbol {
                             assert(typeof match.l == "integer");
                             s += match.l;
                             // TODO make this configureable?  Like `actions`?
-                            submatches.push(_post(match));
+                            _post(sym, match, submatches, grammar);
                         }
                     }
                     if (good) {
@@ -128,20 +148,21 @@ class Symbol {
 
             case SYMBOL_TYPE.REPETITION:
                 local sym = v.sym;
+                assert(sym instanceof Symbol);
                 local low = v.low;
                 local high = v.high;
                 local matches = 0;
                 local submatches = [];
                 local offset = 0;
                 while (high == null || matches <= high) {
-                    local match = sym.match(input, pos+offset, rules, memos, actions);
+                    local match = sym.match(input, pos+offset, grammar, actions, memos, state);
                     if (match == null) {
                         break;
                     } else {
                         assert(match instanceof Match);
                         matches += 1;
                         offset += match.l;
-                        submatches.push(match);
+                        _post(sym, match, submatches, grammar);
                     }
                 }
                 if (matches >= low) {
@@ -153,7 +174,7 @@ class Symbol {
                 }
 
             case SYMBOL_TYPE.LOOKAHEAD:
-                match = v.match(input, pos, rules, memos, actions);
+                match = v.match(input, pos, grammar, actions, memos, state);
                 if (match) {
                     return Match(0, null);
                 } else {
@@ -161,11 +182,25 @@ class Symbol {
                 }
 
             case SYMBOL_TYPE.NEGATIVE_LOOKAHEAD:
-                match = v.match(input, pos, rules, memos, actions);
+                match = v.match(input, pos, grammar, actions, memos, state);
                 if (match) {
                     return null;
                 } else {
                     return Match(0, null);
+                }
+
+            case SYMBOL_TYPE.POSITION_ASSERTION:
+                if (v >= 0 ? pos == v : pos == input.len()+1+v) {
+                    return Match(0, null);
+                } else {
+                    return null;
+                }
+
+            case SYMBOL_TYPE.BOOLEAN:
+                if (v) {
+                    return Match(0, null);
+                } else {
+                    return null;
                 }
 
             default:
@@ -173,20 +208,30 @@ class Symbol {
         }
     }
 
-    // Post-processing (after cache, before adding to parse tree)
-    // TODO we should have this take the match and the array of submatches to be inserted into
-    // that way we can drop values (e.g. for lookaheads)
-    function _post(match) {
+    // Post-processing (after cache, decides what to add to the parse tree)
+    function _post(sym, match, submatches, grammar) {
         assert(match instanceof Match);
         foreach (key in ["l", "t"]) {
             assert(match[key] != null);
         }
-        if ([SYMBOL_TYPE.STRING, SYMBOL_TYPE.RE].find(match.t) != null) {
-            return match;
-        } else if ([SYMBOL_TYPE.LOOKAHEAD, SYMBOL_TYPE.NEGATIVE_LOOKAHEAD].find(match.t) != null) {
-            return null;
-        } else {
-            return match;
+
+        local keep = true;
+
+        if (match.v == PACKRAT_DROP) {
+            keep = false
+        } else if (sym._keep != null) {
+            keep = sym._keep;
+        } else if (
+            [SYMBOL_TYPE.LOOKAHEAD, SYMBOL_TYPE.NEGATIVE_LOOKAHEAD].find(sym.t) != null && !grammar.noDiscardLookaheads
+            || sym.t == SYMBOL_TYPE.NT && sym.v in grammar.discarded && grammar.discarded[sym.v]
+            || sym.t == SYMBOL_TYPE.STRING && grammar.discardStrings
+            || sym.t == SYMBOL_TYPE.RE && grammar.discardRegexps
+        ) {
+            keep = false;
+        }
+
+        if (keep) {
+            submatches.push(match);
         }
     }
 
@@ -217,14 +262,44 @@ class Symbol {
     static function nla(sym) {
         return Symbol(SYMBOL_TYPE.NEGATIVE_LOOKAHEAD, sym);
     }
+
+    static function start() {
+        return Symbol(SYMBOL_TYPE.POSITION_ASSERTION, 0);
+    }
+
+    static function end() {
+        return Symbol(SYMBOL_TYPE.POSITION_ASSERTION, -1);
+    }
+
+    static function fail() {
+        return Symbol(SYMBOL_TYPE.BOOLEAN, false);
+    }
 }
 local F = Symbol;
 
-local grammarRules = {
+function drop(symbol, drop=true) {
+    symbol._keep = !drop;
+    return symbol;
+}
+
+local grammarGrammar = { discarded={}, discardStrings=false, discardRegexps=false, rules={
     "grammar": [
-        [F.nt("whitespace"), F.rep(F.nt("rule"), 1)],
+        [F.rep(F.nt("statement")), F.nt("whitespace")],
+    ],
+    "statement": [
+        [F.composite([[F.nt("newline")], [F.start(), F.nt("whitespace")] ]), F.composite([ [F.nt("meta")], [ F.nt("rule") ] ])],
+    ],
+    "meta": [
+        [F.str("%"), F.str("discard"), F.nt("break"), F.nt("idList")],
+        [F.str("%"), F.str("discard_strings")],
+        [F.str("%"), F.str("discard_regexps")],
+        [F.str("%"), F.str("no_discard_lookaheads")],
+    ],
+    "idList": [
+        [F.nt("identifier"), F.rep(F.composite([[F.nt("whitespace"), F.str(","), F.nt("whitespace"), F.nt("identifier")]]))],
     ],
     "identifier": [
+        // TODO disallow epsilon as an identifier
         [F.rep(F.composite([ [F.nla(F.str("m/")), F.re("[a-zA-Z0-9_]")] ]), 1)],
     ],
     "arrow": [
@@ -234,7 +309,7 @@ local grammarRules = {
         [F.nt("identifier"), F.nt("ruleSuffix")],
     ],
     "ruleSuffix": [
-        [F.nt("arrow"), F.nt("ruleRhs"), F.nt("whitespace")],
+        [F.nt("arrow"), F.nt("ruleRhs") ],
     ],
     "ruleRhs": [
         [F.nt("ruleOption"), F.nt("ruleRhsSuffix")],
@@ -253,22 +328,25 @@ local grammarRules = {
     ],
     "symbol": [
         [
-            F.nla(F.composite([ [F.nt("identifier"), F.nt("arrow")] ])),
+            F.nla(F.composite([ [F.nt("identifier"), F.nt("arrow")], [F.nt("meta")] ])),
             F.composite([
-                [F.nt("repetition")],
-                [F.nt("normalSymbol")],
+                    [F.nt("repetition")],
+                    [F.nt("normalSymbol")],
             ]),
         ],
     ],
     "normalSymbol": [
         [F.str("!"), F.nt("symbol")],
         [F.str("&"), F.nt("symbol")],
+        [F.str("-"), F.nt("symbol")],
+        [F.str("+"), F.nt("symbol")],
         [F.nt("nonterminal")],
         [F.nt("composite")],
         [F.nt("string")],
         [F.nt("re")],
     ],
     "repetition": [
+        // TODO change this to a regex character class
         [F.nt("normalSymbol"), F.composite([[F.str("?")], [F.str("*")], [F.str("+")]])],
     ],
     "composite": [
@@ -292,8 +370,12 @@ local grammarRules = {
     "break": [
         [F.re(@"\s+")],
     ],
-};
-local grammarActions = {
+    "newline": [
+        [F.re(@"\s*\n(\n|\s)*")],
+    ],
+}};
+
+grammarActions <- {
     "whitespace": @(match) null,
     "chars": @(match) match.v[0].string,
     "string": @(match) F.str(match.v[1].v),
@@ -311,7 +393,8 @@ local grammarActions = {
         return F.rep(sym, times[0], times[1]);
     },
     "symbol": function(match) {
-        local composite = match.v[1];
+        local composite = match.v[0];
+        assert(composite.t != SYMBOL_TYPE.NEGATIVE_LOOKAHEAD);
         assert(typeof composite.v == "array");
         assert(composite.v.len() == 1);
         return composite.v[0].v;
@@ -322,6 +405,10 @@ local grammarActions = {
             return F.nla(sym);
         } else if (match.alt == 1) {
             return F.la(sym);
+        } else if (match.alt == 2) {
+            return drop(sym);
+        } else if (match.alt == 3) {
+            return drop(sym, false);
         } else {
             return sym;
         }
@@ -366,31 +453,88 @@ local grammarActions = {
         }
     },
     "ruleSuffix": @(match) match.v[1].v,
-    "identifier": @(match) join(match.v[0].v.map(@(sub) sub.v[1].string)),
-    "rule": function(match) {
-        local result = {};
-        result[match.v[0].v] <- match.v[1].v;
-        return result;
+    "identifier": @(match) join(match.v[0].v.map(@(sub) sub.v[0].string)),
+    "rule": @(match) [STATEMENT_TYPE.RULE, match.v[0].v, match.v[1].v]
+    "idList": function(match) {
+        local first = match.v[0].v;
+        local rest = match.v[1].v.map(@(m) m.v[3].v);
+        rest.insert(0, first);
+        return rest;
     },
-    "grammar": @(match) mergeAll(match.v[1].v.map(@(submatch) submatch.v)),
+    "meta": function(match) {
+        local type = {
+            discard               = STATEMENT_TYPE.DISCARD_NT,
+            discard_strings       = STATEMENT_TYPE.DISCARD_STRINGS,
+            discard_regexps       = STATEMENT_TYPE.DISCARD_REGEXPS,
+            no_discard_lookaheads = STATEMENT_TYPE.NO_DISCARD_LOOKAHEADS,
+        }[match.v[1].string];
+        local info = [type];
+
+        if (match.alt == 0) {
+            local ids = match.v[3].v;
+            info.push(ids);
+        }
+
+        return info;
+    },
+    "statement": function(match) {
+        assert(typeof match.v == "array")
+        assert(match.v.len() == 2);
+        local composite = match.v[1];
+        assert(typeof composite.v == "array")
+        assert(composite.v.len() == 1);
+        local triplet = composite.v[0].v;
+        return triplet;
+    }
+    "grammar": function(match) {
+        local rules = {};
+        local grammar = { discarded = {}, rules = {} };
+        foreach (sub in match.v[0].v) {
+            local statement = sub.v;
+            local type = statement[0];
+            if (type == STATEMENT_TYPE.RULE) {
+                grammar.rules[statement[1]] <- statement[2]
+            } else if (type == STATEMENT_TYPE.DISCARD_NT) {
+                foreach (id in statement[1]) {
+                    grammar.discarded[id] <- true;
+                }
+            } else if (type == STATEMENT_TYPE.DISCARD_STRINGS) {
+                grammar.discardStrings <- true;
+            } else if (type == STATEMENT_TYPE.DISCARD_REGEXPS) {
+                grammar.discardRegexps <- true;
+            } else if (type == STATEMENT_TYPE.NO_DISCARD_LOOKAHEADS) {
+                grammar.noDiscardLookaheads <- true;
+            } else {
+                throw "unexpected";
+            }
+        }
+        return grammar;
+    },
 };
 
-function parse(ruleName, input, rules, actions, printMemos=false) {
-    if (typeof rules == "string") {
-        rules = parse("grammar", rules, grammarRules, grammarActions);
-        if (!rules) {
+GRAMMAR_DEFAULTS <- { discarded={}, discardStrings=false, discardRegexps=false, noDiscardLookaheads=false };
+
+function parse(ruleName, input, grammar, actions, printMemos=false) {
+    if (typeof grammar == "string") {
+        grammar = parse("grammar", grammar, grammarGrammar, grammarActions);
+        if (!grammar) {
             throw "bad grammar";
         }
     }
 
+    // make sure flags are available when we go to access them
+    grammar.setdelegate(GRAMMAR_DEFAULTS);
+    local state = {};
+
     // Init cache
     local memos = [];
     for (local i = input.len(); i >= 0; i--) {
+        // TODO optimise this
         memos.push({});
     }
 
     local start = Symbol.nt(ruleName);
-    start.match(input, 0, rules, memos, actions);
+    start.match(input, 0, grammar, actions, memos, state);
 
     if (printMemos) print(memos[0]);
     local match = ruleName in memos[0] ? memos[0][ruleName] : null;

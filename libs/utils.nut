@@ -9,6 +9,18 @@ function join(arr, sep="") {
     return s;
 }
 
+function printkeys(table) {
+    foreach(k,v in table) {
+        server.log(k+": " + typeof v);
+    }
+}
+
+function printkvs(table) {
+    foreach(k,v in table) {
+        server.log(k+": " + v);
+    }
+}
+
 function strslice(str, start, end = null) {
     if (start >= str.len() || start == end) {
         return "";

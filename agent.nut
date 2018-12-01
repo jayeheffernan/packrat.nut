@@ -32,25 +32,28 @@ actions <- {
 // Attempt to parse an a value from our input
 input <- "1*2+3*4+5";
 
-grammar <- @"
+rules <- @"
 document  <-  __ (object / array) __
-object    <-  '{' pair (',' pair)* '}' / '{' __ '}'
+object    <-  '{' pair (-',' pair)* '}' / '{' __ '}'
 pair      <-  __ string __ ':' value
-array     <-  '[' value (',' value)* ']' / '[' __ ']'
+array     <-  '[' value (-',' value)* ']' / '[' __ ']'
 value     <-  __ (object / array / string / number / boolean_ / null_) __
-string    <-  '""' ('\' m/./ / m/[^""]/)* '""'
+string    <-  '""' (-'\' +m/./ / +m/[^""]/)* '""'
 number    <-  '-'? ('0' / m/[1-9][0-9]*/) ('.' m/[0-9]+/)? (('e' / 'E') ('+' / '-' / '') m/[0-9]+/)?
 boolean_  <-  'true' / 'false'
 null_     <-  'null'
 __        <-  m/\s*/
+%discard __
+%discard_strings
+%discard_regexps
 ";
 
 actions <- {
     "null_": @(match) null, // this time we actually want the value `null`
-    "boolean_": @(match) match.v[0].string == "true" ? true : false,
+    "boolean_": @(match) match.alt == 0 ? true : false,
     "number": @(match) match.string.tofloat(),
     // TODO: does not support unicode escape sequences (probably)
-    "string": @(match) join(match.v[1].v.map(function(charMatch) {
+    "string": @(match) join(match.v[0].v.map(function(charMatch) {
         if (charMatch.alt == 0) {
             // handles escape codes
             return {
@@ -61,31 +64,31 @@ actions <- {
                 "t": "\t",
                 "\"": "\"",
                 "\\": "\\",
-            }[charMatch.v[1].string];
+            }[charMatch.v[0].string];
         } else {
             assert(typeof charMatch.v == "array");
             assert(charMatch.v.len() == 1);
             return charMatch.v[0].string;
         }
     })),
-    "value": @(match) match.v[1].v[0].v,
+    "value": @(match) match.v[0].v[0].v,
     "array": function(match) {
         if (match.alt == 1) {
             return [];
         } else {
-            local first = match.v[1].v;
-            local rest = match.v[2].v.map(@(sub) sub.v[1].v);
+            local first = match.v[0].v;
+            local rest = match.v[1].v.map(@(sub) sub.v[0].v);
             rest.insert(0, first);
             return rest;
         }
     },
-    "pair": @(match) [match.v[1].v, match.v[4].v],
+    "pair": @(match) [match.v[0].v, match.v[1].v],
     "object": function(match) {
         if (match.alt == 1) {
             return {};
         } else {
-            local first = match.v[1].v;
-            local pairs = match.v[2].v.map(@(sub) sub.v[1].v);
+            local first = match.v[0].v;
+            local pairs = match.v[1].v.map(@(sub) sub.v[0].v);
             pairs.insert(0, first);
             local object = {};
             foreach (pair in pairs) {
@@ -94,12 +97,20 @@ actions <- {
             return object;
         }
     },
-    "document": @(match) match.v[1].v[0].v,
+    "document": @(match) match.v[0].v[0].v,
 };
 
 input <- "@{include('input.json')|escape}";
 start <- "document";
 
+//rules <- grammarGrammar;
+//actions <- grammarActions;
+//start <- "grammar";
+//input <- @"
+//a <- 'a'
+//:discard me
+//"
+
 // server.log("input:" + input);
-result <- parse(start, input, grammar, actions, false);
+result <- parse(start, input, rules, actions, false);
 server.log("output:" + pformat(result.type));
