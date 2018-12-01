@@ -1,3 +1,4 @@
+// TODO documentation
 enum SYMBOL_TYPE {
     NT,
     STRING,
@@ -17,10 +18,9 @@ enum STATEMENT_TYPE {
     DISCARD_REGEXPS,
     NO_DISCARD_LOOKAHEADS,
 }
-PACKRAT_DROP <- [];
-PACKRAT_NOT_CACHED <- [];
 
 class Match {
+    static DROP = [];
     t = null;
     s = null;
     l = null;
@@ -30,13 +30,14 @@ class Match {
     alt = null; // For COMPOSITE and NTs only
     n   = null; // For REPETITIONs only
 
-    _input = null;
+    _in = null;
 
     constructor(l_, v_) {
         l = l_;
         v = v_;
     }
 
+    // TODO make sure that all of these classes print properly
     function _serialize() {
         return { _match=true, t=t, s=s, l=l, v=v, nt=nt, alt=alt, n=n };
         // TODO?
@@ -48,7 +49,7 @@ class Match {
             case "end":
                 return s + l;
             case "string":
-                return ::strslice(_input, s, s + l);
+                return ::strslice(_in, s, s + l);
             default:
                 throw "key not found: " + k;
         }
@@ -57,6 +58,7 @@ class Match {
 }
 
 class Memos {
+    static NOT_CACHED = [];
     _i = 0;
     _memos = null;
     _map = null;
@@ -80,14 +82,21 @@ class Memos {
         if (nt in _map && _map[nt] in _memos[pos]) {
             return _memos[pos][_map[nt]];
         } else {
-            return PACKRAT_NOT_CACHED;
+            return Memos.NOT_CACHED;
         }
     }
 }
 
+// TODO think about blobs and arrays of tokens
+// TODO think about using this as a lexer, and doing a lexer/scanner-based JSON parser
+// NB when lexing we can reuse memos throughout
+// TODO name things
 class Symbol {
     t = null;
     v = null;
+    // TODO make this trickle down to children (pass it through the match
+    // function, if false, so that children don't do work only for the parent
+    // to drop it)
     _keep = null;
 
     constructor(t_, v_, drop=null) {
@@ -99,7 +108,7 @@ class Symbol {
     function match(input, pos, grammar, actions, memos, state = {}) {
         if (t == SYMBOL_TYPE.NT) {
             local cached = memos.get(v, pos);
-            if (cached != PACKRAT_NOT_CACHED) {
+            if (cached != Memos.NOT_CACHED) {
                 return cached;
             }
         }
@@ -107,7 +116,7 @@ class Symbol {
         if (match == null) {
             return null;
         }
-        match._input = input;
+        match._in = input;
         match.t = t;
         match.s = pos;
 
@@ -131,7 +140,7 @@ class Symbol {
         switch (t) {
             case SYMBOL_TYPE.STRING:
                 if (strmatch(input, v, pos)) {
-                    return Match(v.len(), strslice(input, pos, pos+v.len()))
+                    return Match(v.len(), null)
                 } else {
                     return null;
                 }
@@ -140,7 +149,7 @@ class Symbol {
                 matching = v.search(input, pos);
                 if (!matching) return null;
                 assert(matching.begin == pos);
-                return Match(matching.end - matching.begin, strslice(input, pos, matching.end));
+                return Match(matching.end - matching.begin, null);
 
             case SYMBOL_TYPE.COMPOSITE:
                 options = v;
@@ -165,6 +174,7 @@ class Symbol {
                             assert(typeof match.l == "integer");
                             s += match.l;
                             // TODO make this configureable?  Like `actions`?
+                            // maybe just have "wrapped" or "unwrapped" as options?
                             _post(sym, match, submatches, grammar);
                         }
                     }
@@ -250,7 +260,7 @@ class Symbol {
 
         local keep = true;
 
-        if (match.v == PACKRAT_DROP) {
+        if (match.v == Match.DROP) {
             keep = false
         } else if (sym._keep != null) {
             keep = sym._keep;
@@ -308,8 +318,24 @@ class Symbol {
         return Symbol(SYMBOL_TYPE.BOOLEAN, false);
     }
 }
+// TODO change this binding
 local F = Symbol;
 
+// TODO implement drop as a unary minus metamethod on Symbol, then use it to
+// simplify grammarGrammar
+// extension: implement '-' for "concatenate, and drop this one", '+' for
+// "concatenate, and keep this one" and '/' for dividing options "next option".
+// These will need to operate between Symbols and arrays of symbols. * is
+// probably the best choice.  See if we can bindenv to `Symbol` so that we
+// don't have to put `Symbol.`s or `F.`s everywhere.  Make it like a DSL.  If
+// we declare our non-terminals we can even pre-instantiate (or use _get
+// metamethod on a delegate) in order to enable referecing non-terminals with
+// bare identifiers.  If we automatically convert strings with Symbol.str and
+// arrays with F.composite we will be balling
+// TODO ALSO!  implement chai's expect in Squirrel using this parser!  (or
+// maybe an earley parser would be more suited?)  Each chained accessor can add
+// the key as a token to an internal array, then calling the chain (_call
+// metamethod) can cause it "compile" the tokens to assertions
 function drop(symbol, drop=true) {
     symbol._keep = !drop;
     return symbol;
@@ -332,8 +358,7 @@ local grammarGrammar = { discarded={}, discardStrings=false, discardRegexps=fals
         [F.nt("identifier"), F.rep(F.composite([[F.nt("whitespace"), F.str(","), F.nt("whitespace"), F.nt("identifier")]]))],
     ],
     "identifier": [
-        // TODO disallow epsilon as an identifier
-        [F.rep(F.composite([ [F.nla(F.str("m/")), F.re("[a-zA-Z0-9_]")] ]), 1)],
+        [F.rep(F.composite([ [F.nla(F.str("m/")), drop(F.nla(F.str("epsilon"))), F.re("[a-zA-Z0-9_]")] ]), 1)],
     ],
     "arrow": [
         [F.nt("whitespace"), F.str("<-"), F.nt("whitespace")],
@@ -369,18 +394,16 @@ local grammarGrammar = { discarded={}, discardStrings=false, discardRegexps=fals
         ],
     ],
     "normalSymbol": [
-        [F.str("!"), F.nt("symbol")],
-        [F.str("&"), F.nt("symbol")],
-        [F.str("-"), F.nt("symbol")],
-        [F.str("+"), F.nt("symbol")],
+        // the first case covers special markup for lookaheads, etc.
+        [F.re(@"[+\-&!]"), F.nt("symbol")],
         [F.nt("nonterminal")],
         [F.nt("composite")],
         [F.nt("string")],
         [F.nt("re")],
     ],
     "repetition": [
-        // TODO change this to a regex character class
-        [F.nt("normalSymbol"), F.composite([[F.str("?")], [F.str("*")], [F.str("+")]])],
+        // TODO specific number of repetitions?
+        [F.nt("normalSymbol"), F.re(@"[?*+]")],
     ],
     "composite": [
         [F.str("("), F.nt("ruleRhs"), F.str(")")],
@@ -418,10 +441,9 @@ grammarActions <- {
     "repetition": function(match) {
         assert(typeof match.v == "array");
         assert(match.v.len() == 2);
-        assert(typeof match.v[1].v == "array")
-        assert(match.v[1].v.len() == 1)
+        assert(match.v[1].v == null)
         local sym = match.v[0].v;
-        local repChar = match.v[1].v[0].string;
+        local repChar = match.v[1].string;
         local times = { "?": [0, 1], "*": [0, null], "+": [1, null] }[repChar];
         return F.rep(sym, times[0], times[1]);
     },
@@ -435,13 +457,12 @@ grammarActions <- {
     "normalSymbol": function(match) {
         local sym = match.v[match.v.len()-1].v;
         if (match.alt == 0) {
-            return F.nla(sym);
-        } else if (match.alt == 1) {
-            return F.la(sym);
-        } else if (match.alt == 2) {
-            return drop(sym);
-        } else if (match.alt == 3) {
-            return drop(sym, false);
+            return {
+                "+": @() drop(sym, false),
+                "-": @() drop(sym),
+                "&": @() F.la(sym),
+                "!": @() F.nla(sym),
+            }[match.v[0].string]();
         } else {
             return sym;
         }
@@ -567,7 +588,7 @@ function parse(ruleName, input, grammar, actions, printMemos=false) {
 
     if (printMemos) print(memos._memos[0]);
     local match = memos.get(ruleName, 0);
-    if (match == PACKRAT_NOT_CACHED || match.l != input.len()) {
+    if (match == Memos.NOT_CACHED || match.l != input.len()) {
         return null;
     } else {
         return match.v;
