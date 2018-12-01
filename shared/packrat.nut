@@ -18,6 +18,7 @@ enum STATEMENT_TYPE {
     NO_DISCARD_LOOKAHEADS,
 }
 PACKRAT_DROP <- [];
+PACKRAT_NOT_CACHED <- [];
 
 class Match {
     t = null;
@@ -55,6 +56,35 @@ class Match {
 
 }
 
+class Memos {
+    _i = 0;
+    _memos = null;
+    _map = null;
+
+    constructor(n, start=null) {
+        _memos = [];
+        _map = {};
+        for (local i = 0; i < n+1; i++)
+            _memos.push({});
+        if (start != null)
+            _map[start] <- _i++;
+    }
+
+    function cache(nt, pos, value) {
+        if (!(nt in _map))
+            _map[nt] <- _i++;
+        _memos[pos][_map[nt]] <- value;
+    }
+
+    function get(nt, pos) {
+        if (nt in _map && _map[nt] in _memos[pos]) {
+            return _memos[pos][_map[nt]];
+        } else {
+            return PACKRAT_NOT_CACHED;
+        }
+    }
+}
+
 class Symbol {
     t = null;
     v = null;
@@ -67,8 +97,11 @@ class Symbol {
     }
 
     function match(input, pos, grammar, actions, memos, state = {}) {
-        if (t == SYMBOL_TYPE.NT && v in memos[pos]) {
-            return memos[pos][v];
+        if (t == SYMBOL_TYPE.NT) {
+            local cached = memos.get(v, pos);
+            if (cached != PACKRAT_NOT_CACHED) {
+                return cached;
+            }
         }
         local match = _match(input, pos, grammar, actions, memos, state);
         if (match == null) {
@@ -79,13 +112,13 @@ class Symbol {
         match.s = pos;
 
         if (t == SYMBOL_TYPE.NT && v in actions) {
+            // TODO don't do this if the result is about to be dropped?  Think
+            // about effect on cache
             match.v = actions[v](match);
         }
 
         if (t == SYMBOL_TYPE.NT) {
-            // TODO don't do this if the result is about to be dropped?  Think
-            // about effect on cache
-            memos[pos][v] <- match;
+            memos.cache(v, pos, match);
         }
         assert(match.l != null);
         assert(typeof match.l == "integer");
@@ -527,20 +560,16 @@ function parse(ruleName, input, grammar, actions, printMemos=false) {
     local state = {};
 
     // Init cache
-    local memos = [];
-    for (local i = input.len(); i >= 0; i--) {
-        // TODO optimise this
-        memos.push({});
-    }
+    local memos = Memos(input.len(), ruleName);
 
     local start = Symbol.nt(ruleName);
     start.match(input, 0, grammar, actions, memos, state);
 
-    if (printMemos) print(memos[0]);
-    local match = ruleName in memos[0] ? memos[0][ruleName] : null;
-    if (match && match.l == input.len()) {
-        return match.v;
-    } else {
+    if (printMemos) print(memos._memos[0]);
+    local match = memos.get(ruleName, 0);
+    if (match == PACKRAT_NOT_CACHED || match.l != input.len()) {
         return null;
+    } else {
+        return match.v;
     }
 }

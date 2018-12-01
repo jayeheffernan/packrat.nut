@@ -20,6 +20,38 @@
     {
       "type": "Feature",
       "properties": {
+        "name": "Franconia-Springfield",
+        "marker-color": "#0000ff",
+        "marker-symbol": "rail-metro",
+        "line": "blue"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -77.16797018042666,
+          38.766521892689916
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Franconia-Springfield",
+        "marker-color": "#0000ff",
+        "marker-symbol": "rail-metro",
+        "line": "blue"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -77.16797018042666,
+          38.766521892689916
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
         "name": "Federal Center SW",
         "marker-color": "#0000ff",
         "marker-symbol": "rail-metro",

@@ -103,14 +103,5 @@ actions <- {
 input <- "@{include('input.json')|escape}";
 start <- "document";
 
-//rules <- grammarGrammar;
-//actions <- grammarActions;
-//start <- "grammar";
-//input <- @"
-//a <- 'a'
-//:discard me
-//"
-
-// server.log("input:" + input);
 result <- parse(start, input, rules, actions, false);
 server.log("output:" + pformat(result.type));
