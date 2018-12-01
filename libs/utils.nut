@@ -9,6 +9,25 @@ function join(arr, sep="") {
     return s;
 }
 
+function strslice(str, start, end = null) {
+    if (start >= str.len() || start == end) {
+        return "";
+    } else if (end == null) {
+        return str.slice(start);
+    } else {
+        return str.slice(start, end);
+    }
+}
+
+function strmatch(str, substr, pos=0) {
+    local l = substr.len();
+    if (pos + l > str.len()) return false;
+    for (local i = 0; i < l; i++) {
+        if (substr[i] != str[pos+i]) return false;
+    }
+    return true;
+}
+
 function mergeAll(tables) {
     local merged = {};
     foreach (t in tables) {

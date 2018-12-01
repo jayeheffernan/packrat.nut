@@ -68,6 +68,22 @@
     {
       "type": "Feature",
       "properties": {
+        "name": "Judiciary Sq",
+        "marker-color": "#ff0000",
+        "marker-symbol": "rail-metro",
+        "line": "red"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -77.01663895662587,
+          38.896090317663166
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
         "name": "Ronald Reagan Washington National Airport",
         "marker-color": "#0000ff",
         "marker-symbol": "rail-metro",

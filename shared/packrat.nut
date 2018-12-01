@@ -1,4 +1,4 @@
-enum FRAGMENT_TYPE {
+enum SYMBOL_TYPE {
     NT,
     STRING,
     RE,
@@ -8,144 +8,164 @@ enum FRAGMENT_TYPE {
     REPETITION
 };
 
-class Fragment {
-    _fragment = true;
-    kind = null;
-    value = null;
+class Match {
+    t = null;
+    s = null;
+    l = null;
+    v = null;
 
-    constructor(kind_, value_) {
-        kind  = kind_;
-        value = value_;
+    nt = null; // For NTs only
+    alt = null; // For COMPOSITE and NTs only
+    n = null; // For REPETITIONs only
+
+    _input = null;
+
+    constructor(l_, v_) {
+        l = l_;
+        v = v_;
+    }
+
+    function _serialize() {
+        return { _match=true, t=t, s=s, l=l, v=v, nt=nt, alt=alt, n=n };
+        // TODO?
+        // foreach (k,v in this.getclass()) {
+    }
+
+    function _get(k) {
+        switch (k) {
+            case "end":
+                return s + l;
+            case "string":
+                return ::strslice(_input, s, s + l);
+            default:
+                throw "key not found: " + k;
+        }
+    }
+
+}
+
+class Symbol {
+    t = null;
+    v = null;
+
+    constructor(t_, v_) {
+        t  = t_;
+        v = v_;
     }
 
     function match(input, pos, rules, memos, actions = {}, post = {}) {
-        if (kind == FRAGMENT_TYPE.NT && value in memos[pos]) {
-            return memos[pos][value];
+        if (t == SYMBOL_TYPE.NT && v in memos[pos]) {
+            return memos[pos][v];
         }
         local match = _match(input, pos, rules, memos, actions, post);
-        local result;
         if (match == null) {
             return null;
-        } else {
-            if (typeof match == "integer") {
-                local consumed = match;
-                result = { consumed=consumed, value=consumed == 0 ? "" : input.slice(pos, pos+consumed) };
-            } else {
-                assert("value" in match);
-                assert("consumed" in match);
-                assert(typeof match.consumed == "integer")
-                result = match;
-            }
         }
-        result.kind <- kind;
-        result.start <- pos;
+        match._input = input;
+        match.t = t;
+        match.s = pos;
 
-        if (kind == FRAGMENT_TYPE.NT) {
-            result.name <- value;
-            if (value in actions) {
-                result.value <- actions[value](result);
-            }
+        if (t == SYMBOL_TYPE.NT && match.nt in actions) {
+            match.v = actions[v](match);
         }
 
-        if (kind == FRAGMENT_TYPE.NT) {
-            memos[pos][value] <- result;
+        if (t == SYMBOL_TYPE.NT) {
+            memos[pos][v] <- match;
         }
-        assert("value" in result);
-        assert("consumed" in result);
-        assert(typeof result.consumed == "integer");
-        return result;
+        assert(match.l != null);
+        assert(typeof match.l == "integer");
+        return match;
     }
 
     function _match(input, pos, rules, memos, actions, post) {
-        local string = pos == input.len() ? "" : input.slice(pos);
         local matching, match, total, ruleName, options;
-        switch (kind) {
-            case FRAGMENT_TYPE.STRING:
-                return (value == "" || string.find(value) == 0) ? value.len() : null;
-
-            case FRAGMENT_TYPE.RE:
-                matching = regexp(value).search(string, 0);
-                if (!matching) {
+        switch (t) {
+            case SYMBOL_TYPE.STRING:
+                if (strmatch(input, v, pos)) {
+                    return Match(v.len(), strslice(input, pos, pos+v.len()))
+                } else {
                     return null;
                 }
-                return matching.end - matching.begin;
 
-            case FRAGMENT_TYPE.COMPOSITE:
-                options = value;
-            case FRAGMENT_TYPE.NT:
-                options = options || rules[value];
+            case SYMBOL_TYPE.RE:
+                //if (input == ::input) server.log("searching " + pos);
+                matching = v.search(input, pos);
+                if (!matching) return null;
+                assert(matching.begin == pos);
+                return Match(matching.end - matching.begin, strslice(input, pos, matching.end));
+
+            case SYMBOL_TYPE.COMPOSITE:
+                options = v;
+            case SYMBOL_TYPE.NT:
+                options = options || rules[v];
                 for (local i = 0; i < options.len(); i++) {
                     local option = options[i];
                     local good = true;
                     local submatches = [];
-                    local start = pos;
-                    foreach (fragment in option) {
-                        local match = fragment.match(input, start, rules, memos, actions);
+                    local s = pos;
+                    foreach (sym in option) {
+                        local match = sym.match(input, s, rules, memos, actions);
                         if (match == null) {
                             good = false;
                             break;
                         } else {
-                            local consumed = match.consumed;
-                            assert(typeof consumed == "integer");
+                            assert(typeof match.l == "integer");
+                            s += match.l;
                             // TODO make this configureable?  Like `actions`?
                             submatches.push(_post(match));
-                            start += consumed;
                         }
                     }
                     if (good) {
-                        local ans = { consumed=start - pos, value=submatches, alternative=i };
-                        return ans;
+                        local m = Match(s - pos, submatches);
+                        if (t == SYMBOL_TYPE.NT) m.nt = v;
+                        m.alt = i;
+                        return m;
                     } else {
                         continue;
                     }
                 }
                 return null;
 
-            case FRAGMENT_TYPE.REPETITION:
-                local fragment = value.fragment;
-                local low = value.low;
-                local high = value.high;
+            case SYMBOL_TYPE.REPETITION:
+                local sym = v.sym;
+                local low = v.low;
+                local high = v.high;
                 local matches = 0;
                 local submatches = [];
                 local offset = 0;
                 while (high == null || matches <= high) {
-                    local match = fragment.match(input, pos+offset, rules, memos, actions);
+                    local match = sym.match(input, pos+offset, rules, memos, actions);
                     if (match == null) {
                         break;
                     } else {
-                        assert(typeof match == "table");
-                        assert("consumed" in match);
-                        assert(typeof match.consumed == "integer");
+                        assert(match instanceof Match);
                         matches += 1;
-                        offset += match.consumed;
+                        offset += match.l;
                         submatches.push(match);
                     }
                 }
                 if (matches >= low) {
-                    return { consumed=offset, value=submatches, times=matches };
+                    local m = Match(offset, submatches);
+                    m.n = matches;
+                    return m;
                 } else {
                     return null;
                 }
 
-            case FRAGMENT_TYPE.LOOKAHEAD:
-                match = value.match(input, pos, rules, memos, actions);
+            case SYMBOL_TYPE.LOOKAHEAD:
+                match = v.match(input, pos, rules, memos, actions);
                 if (match) {
-                    // TODO is this good enough?  How to do it in Squirrel?  We don't want this value being modified accidentally
-                    local result = clone(match);
-                    result.consumed <- 0;
-                    result.value <- [];
-                    return result;
+                    return Match(0, null);
                 } else {
                     return null;
                 }
 
-            case FRAGMENT_TYPE.NEGATIVE_LOOKAHEAD:
-                match = value.match(input, pos, rules, memos, actions);
+            case SYMBOL_TYPE.NEGATIVE_LOOKAHEAD:
+                match = v.match(input, pos, rules, memos, actions);
                 if (match) {
                     return null;
                 } else {
-                    local result = { name=value.value, consumed=0, value=[] };
-                    return result;
+                    return Match(0, null);
                 }
 
             default:
@@ -157,13 +177,13 @@ class Fragment {
     // TODO we should have this take the match and the array of submatches to be inserted into
     // that way we can drop values (e.g. for lookaheads)
     function _post(match) {
-        assert(typeof match == "table");
-        foreach (key in ["consumed", "kind", "value"]) {
-            assert(key in match);
+        assert(match instanceof Match);
+        foreach (key in ["l", "t"]) {
+            assert(match[key] != null);
         }
-        if ([FRAGMENT_TYPE.STRING, FRAGMENT_TYPE.RE].find(match.kind) != null) {
-            return match.value;
-        } else if ([FRAGMENT_TYPE.LOOKAHEAD, FRAGMENT_TYPE.NEGATIVE_LOOKAHEAD].find(match.kind) != null) {
+        if ([SYMBOL_TYPE.STRING, SYMBOL_TYPE.RE].find(match.t) != null) {
+            return match;
+        } else if ([SYMBOL_TYPE.LOOKAHEAD, SYMBOL_TYPE.NEGATIVE_LOOKAHEAD].find(match.t) != null) {
             return null;
         } else {
             return match;
@@ -171,34 +191,34 @@ class Fragment {
     }
 
     static function nt(name) {
-        return Fragment(FRAGMENT_TYPE.NT, name);
+        return Symbol(SYMBOL_TYPE.NT, name);
     }
 
     static function re(str) {
-        return Fragment(FRAGMENT_TYPE.RE, "^" + str);
+        return Symbol(SYMBOL_TYPE.RE, regexp("^" + str));
     }
 
     static function str(str) {
-        return Fragment(FRAGMENT_TYPE.STRING, str);
+        return Symbol(SYMBOL_TYPE.STRING, str);
     }
 
     static function composite(opts) {
-        return Fragment(FRAGMENT_TYPE.COMPOSITE, opts);
+        return Symbol(SYMBOL_TYPE.COMPOSITE, opts);
     }
 
-    static function rep(fragment, low=0, high=null) {
-        return Fragment(FRAGMENT_TYPE.REPETITION, { fragment=fragment, low=low, high=high });
+    static function rep(sym, low=0, high=null) {
+        return Symbol(SYMBOL_TYPE.REPETITION, { sym=sym, low=low, high=high });
     }
 
-    static function la(fragment) {
-        return Fragment(FRAGMENT_TYPE.LOOKAHEAD, fragment);
+    static function la(sym) {
+        return Symbol(SYMBOL_TYPE.LOOKAHEAD, sym);
     }
 
-    static function nla(fragment) {
-        return Fragment(FRAGMENT_TYPE.NEGATIVE_LOOKAHEAD, fragment);
+    static function nla(sym) {
+        return Symbol(SYMBOL_TYPE.NEGATIVE_LOOKAHEAD, sym);
     }
 }
-local F = Fragment;
+local F = Symbol;
 
 local grammarRules = {
     "grammar": [
@@ -225,31 +245,31 @@ local grammarRules = {
     ],
     "ruleOption": [
         [F.str("epsilon")],
-        [F.nt("fragment"), F.nt("ruleOptionSuffix")],
+        [F.nt("symbol"), F.nt("ruleOptionSuffix")],
     ],
     "ruleOptionSuffix": [
-        [F.nt("break"), F.nt("fragment"), F.nt("ruleOptionSuffix")],
+        [F.nt("break"), F.nt("symbol"), F.nt("ruleOptionSuffix")],
         [],
     ],
-    "fragment": [
+    "symbol": [
         [
             F.nla(F.composite([ [F.nt("identifier"), F.nt("arrow")] ])),
             F.composite([
                 [F.nt("repetition")],
-                [F.nt("normalFragment")],
+                [F.nt("normalSymbol")],
             ]),
         ],
     ],
-    "normalFragment": [
-        [F.str("!"), F.nt("fragment")],
-        [F.str("&"), F.nt("fragment")],
+    "normalSymbol": [
+        [F.str("!"), F.nt("symbol")],
+        [F.str("&"), F.nt("symbol")],
         [F.nt("nonterminal")],
         [F.nt("composite")],
         [F.nt("string")],
         [F.nt("re")],
     ],
     "repetition": [
-        [F.nt("normalFragment"), F.composite([[F.str("?")], [F.str("*")], [F.str("+")]])],
+        [F.nt("normalSymbol"), F.composite([[F.str("?")], [F.str("*")], [F.str("+")]])],
     ],
     "composite": [
         [F.str("("), F.nt("ruleRhs"), F.str(")")],
@@ -275,53 +295,53 @@ local grammarRules = {
 };
 local grammarActions = {
     "whitespace": @(match) null,
-    "chars": @(match) match.value[0],
-    "string": @(match) F.str(match.value[1].value),
-    "nonterminal": @(match) F.nt(match.value[0].value),
-    "re": @(match) F.re(match.value[1]),
-    "composite": @(match) F.composite(match.value[1].value),
+    "chars": @(match) match.v[0].string,
+    "string": @(match) F.str(match.v[1].v),
+    "nonterminal": @(match) F.nt(match.v[0].v),
+    "re": @(match) F.re(match.v[1].string),
+    "composite": @(match) F.composite(match.v[1].v),
     "repetition": function(match) {
-        assert(typeof match.value == "array");
-        assert(match.value.len() == 2);
-        assert(typeof match.value[1].value == "array")
-        assert(match.value[1].value.len() == 1)
-        local fragment = match.value[0].value;
-        local repChar = match.value[1].value[0];
+        assert(typeof match.v == "array");
+        assert(match.v.len() == 2);
+        assert(typeof match.v[1].v == "array")
+        assert(match.v[1].v.len() == 1)
+        local sym = match.v[0].v;
+        local repChar = match.v[1].v[0].string;
         local times = { "?": [0, 1], "*": [0, null], "+": [1, null] }[repChar];
-        return F.rep(fragment, times[0], times[1]);
+        return F.rep(sym, times[0], times[1]);
     },
-    "fragment": function(match) {
-        local composite = match.value[1];
-        assert(typeof composite.value == "array");
-        assert(composite.value.len() == 1);
-        return composite.value[0].value;
+    "symbol": function(match) {
+        local composite = match.v[1];
+        assert(typeof composite.v == "array");
+        assert(composite.v.len() == 1);
+        return composite.v[0].v;
     },
-    "normalFragment": function(match) {
-        local fragment = match.value[match.value.len()-1].value;
-        if (match.alternative == 0) {
-            return F.nla(fragment);
-        } else if (match.alternative == 1) {
-            return F.la(fragment);
+    "normalSymbol": function(match) {
+        local sym = match.v[match.v.len()-1].v;
+        if (match.alt == 0) {
+            return F.nla(sym);
+        } else if (match.alt == 1) {
+            return F.la(sym);
         } else {
-            return fragment;
+            return sym;
         }
     },
     "ruleOption": function(match) {
-        if (match.alternative == 0) {
+        if (match.alt == 0) {
             return [];
         } else {
-            local fragment = match.value[0].value;
-            local rest = match.value[1].value;
-            rest.insert(0, fragment);
+            local sym = match.v[0].v;
+            local rest = match.v[1].v;
+            rest.insert(0, sym);
             return rest;
         }
     },
     "ruleOptionSuffix": function(match) {
-        switch (match.alternative) {
+        switch (match.alt) {
             case 0:
-                local fragment = match.value[1].value;
-                local rest = match.value[2].value;
-                rest.insert(0, fragment);
+                local sym = match.v[1].v;
+                local rest = match.v[2].v;
+                rest.insert(0, sym);
                 return rest;
             case 1:
                 return [];
@@ -330,29 +350,29 @@ local grammarActions = {
         }
     },
     "ruleRhs": function(match) {
-        local ruleOption = match.value[0].value;
-        local rest = match.value[1].value;
+        local ruleOption = match.v[0].v;
+        local rest = match.v[1].v;
         rest.insert(0, ruleOption);
         return rest;
     },
     "ruleRhsSuffix": function(match) {
-        switch (match.alternative) {
+        switch (match.alt) {
             case 0:
-                return match.value[3].value;
+                return match.v[3].v;
             case 1:
                 return [];
             default:
                 throw "unexpected";
         }
     },
-    "ruleSuffix": @(match) match.value[1].value,
-    "identifier": @(match) join(match.value[0].value.map(@(sub) sub.value[1])),
+    "ruleSuffix": @(match) match.v[1].v,
+    "identifier": @(match) join(match.v[0].v.map(@(sub) sub.v[1].string)),
     "rule": function(match) {
         local result = {};
-        result[match.value[0].value] <- match.value[1].value;
+        result[match.v[0].v] <- match.v[1].v;
         return result;
     },
-    "grammar": @(match) mergeAll(match.value[1].value.map(@(submatch) submatch.value)),
+    "grammar": @(match) mergeAll(match.v[1].v.map(@(submatch) submatch.v)),
 };
 
 function parse(ruleName, input, rules, actions, printMemos=false) {
@@ -369,13 +389,13 @@ function parse(ruleName, input, rules, actions, printMemos=false) {
         memos.push({});
     }
 
-    local start = Fragment.nt(ruleName);
+    local start = Symbol.nt(ruleName);
     start.match(input, 0, rules, memos, actions);
 
     if (printMemos) print(memos[0]);
     local match = ruleName in memos[0] ? memos[0][ruleName] : null;
-    if (match && match.consumed == input.len()) {
-        return match.value;
+    if (match && match.l == input.len()) {
+        return match.v;
     } else {
         return null;
     }

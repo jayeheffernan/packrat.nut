@@ -14,18 +14,18 @@ start <- "additive";
 
 // Define our actions
 actions <- {
-    "number": @(match) match.value[0].tointeger(),
-    "multitiveSuffix": @(match) match.value[1].value,
+    "number": @(match) match.v[0].tointeger(),
+    "multitiveSuffix": @(match) match.v[1].v,
     "multitive": function(match) {
-        local num = match.value[0].value;
-        local suffixes = match.value[1].value;
-        return num * (suffixes.len() ? suffixes[0].value : 1);
+        local num = match.v[0].v;
+        local suffixes = match.v[1].v;
+        return num * (suffixes.len() ? suffixes[0].v : 1);
     },
-    "additiveSuffix": @(match) match.value[1].value,
+    "additiveSuffix": @(match) match.v[1].v,
     "additive": function(match) {
-        local num = match.value[0].value;
-        local suffixes = match.value[1].value;
-        return num + (suffixes.len() ? suffixes[0].value : 0);
+        local num = match.v[0].v;
+        local suffixes = match.v[1].v;
+        return num + (suffixes.len() ? suffixes[0].v : 0);
     },
 };
 
@@ -47,11 +47,11 @@ __        <-  m/\s*/
 
 actions <- {
     "null_": @(match) null, // this time we actually want the value `null`
-    "boolean_": @(match) match.value[0] == "true" ? true : false,
-    "number": @(match) input.slice(match.start, match.start+match.consumed).tofloat(),
+    "boolean_": @(match) match.v[0].string == "true" ? true : false,
+    "number": @(match) match.string.tofloat(),
     // TODO: does not support unicode escape sequences (probably)
-    "string": @(match) join(match.value[1].value.map(function(charMatch) {
-        if (charMatch.alternative == 0) {
+    "string": @(match) join(match.v[1].v.map(function(charMatch) {
+        if (charMatch.alt == 0) {
             // handles escape codes
             return {
                 "b": "\b",
@@ -61,31 +61,31 @@ actions <- {
                 "t": "\t",
                 "\"": "\"",
                 "\\": "\\",
-            }[charMatch.value[1]];
+            }[charMatch.v[1].string];
         } else {
-            assert(typeof charMatch.value == "array");
-            assert(charMatch.value.len() == 1);
-            return charMatch.value[0];
+            assert(typeof charMatch.v == "array");
+            assert(charMatch.v.len() == 1);
+            return charMatch.v[0].string;
         }
     })),
-    "value": @(match) match.value[1].value[0].value,
+    "value": @(match) match.v[1].v[0].v,
     "array": function(match) {
-        if (match.alternative == 1) {
+        if (match.alt == 1) {
             return [];
         } else {
-            local first = match.value[1].value;
-            local rest = match.value[2].value.map(@(sub) sub.value[1].value);
+            local first = match.v[1].v;
+            local rest = match.v[2].v.map(@(sub) sub.v[1].v);
             rest.insert(0, first);
             return rest;
         }
     },
-    "pair": @(match) [match.value[1].value, match.value[4].value],
+    "pair": @(match) [match.v[1].v, match.v[4].v],
     "object": function(match) {
-        if (match.alternative == 1) {
+        if (match.alt == 1) {
             return {};
         } else {
-            local first = match.value[1].value;
-            local pairs = match.value[2].value.map(@(sub) sub.value[1].value);
+            local first = match.v[1].v;
+            local pairs = match.v[2].v.map(@(sub) sub.v[1].v);
             pairs.insert(0, first);
             local object = {};
             foreach (pair in pairs) {
@@ -94,7 +94,7 @@ actions <- {
             return object;
         }
     },
-    "document": @(match) match.value[1].value[0].value,
+    "document": @(match) match.v[1].v[0].v,
 };
 
 input <- "@{include('input.json')|escape}";
