@@ -291,6 +291,11 @@ class Symbol {
     }
 
     static function composite(opts) {
+        if (opts.len() == 0) {
+            opts = [[]];
+        } else if (typeof opts[0] != "array") {
+            opts = [opts];
+        }
         return Symbol(SYMBOL_TYPE.COMPOSITE, opts);
     }
 
@@ -319,7 +324,7 @@ class Symbol {
     }
 }
 // TODO change this binding
-local F = Symbol;
+F <- Symbol;
 
 // TODO implement drop as a unary minus metamethod on Symbol, then use it to
 // simplify grammarGrammar
@@ -340,6 +345,179 @@ function drop(symbol, drop=true) {
     symbol._keep = !drop;
     return symbol;
 }
+
+class Grammar {
+    _rules = null;
+    _env = null;
+    _compiled = null;
+
+    constructor(nts=null) {
+        _rules = [];
+        nts = nts || [];
+        _env = {
+            s=sym,
+            r=rule,
+            epsilon=::Rule(this),
+            m=Symbol.re,
+        };
+        foreach (nt in nts) {
+            _env[nt] <- ::F.nt(nt);
+        }
+        _compiled = { discarded = {}, rules = {} };
+    }
+
+    function discard(...) {
+        if (vargv.len() != 1) {
+            return discard(vargv);
+        } else if (typeof vargv[0] != "array") {
+            return discard([vargv[0]]);
+        } else {
+            foreach (nt in vargv[0]) {
+                _compiled.discarded[typeof nt == "string" ? nt : nt.v] <- true;
+            }
+        }
+    }
+
+    function discard_strings() {
+        _compiled.discardStrings <- true;
+    }
+
+    function discard_regexps () {
+        _compiled.discardRegexps <- true;
+    }
+
+    function no_discard_lookaheads () {
+        _compiled.noDiscardLookaheads <- true;
+    }
+    function rules(fn) {
+        fn.bindenv(this)();
+    }
+
+    function _get(idx) {
+        if (idx in _env) return _env[idx];
+        return this[idx];
+    }
+
+    function compile() {
+        foreach (rule in _rules) {
+            if (!rule._lhs in grammar.rules) rules[rule._lhs] <- [];
+            if (rule._lhs in grammar.rules) {
+                _compiled.rules[rule._lhs].extend(rule._opts);
+            } else {
+                _compiled.rules[rule._lhs] <- rule._opts;
+            }
+        }
+        return _compiled;
+    }
+
+    static function rule(name) {
+        if (name instanceof Symbol) {
+            assert(name.t == SYMBOL_TYPE.NT);
+            name = name.v;
+        }
+        assert(typeof name == "string");
+        local rule = ::Rule(this);
+        rule._lhs = name;
+        rule._opts = null;
+        _rules.push(rule);
+        _env[name] <- ::F.nt(name);
+        return rule;
+    }
+
+    static function sym(from = null) {
+        if (from instanceof ::Rule) {
+            return from;
+        } else if (from == null) {
+            return ::Rule(this);
+        } else if (typeof from == "array") {
+            return ::Rule(this, [[::F.composite(from)]]);
+        } else if (typeof from == "string") {
+            return ::Rule(this, [[::F.str(from)]]);
+        } else if (from instanceof Symbol) {
+            return ::Rule(this, [[from]]);
+        } else {
+            throw "can't convert: " + typeof from + ": " + from;
+        }
+    }
+}
+
+class Rule {
+    _grammar = null;
+    _lhs = null;
+    _opts = null;
+
+    constructor(grammar, opts = null) {
+        _grammar = grammar;
+        _opts = opts || [[]];
+    }
+
+    function _mul(r) {
+        r = _grammar.sym(r);
+        assert(r instanceof Rule);
+        _opts[_opts.len()-1].extend(r._opts[0]);
+        for (local i = 1; i < r._opts.len(); i++) {
+            local opt = r._opts[i];
+            _opts.push(opt);
+        }
+        return this;
+    }
+
+    function _mod(r) {
+        return this * r;
+    }
+
+    function _div(r) {
+        r = _grammar.sym(r);
+        assert(r instanceof Rule);
+        if (!_opts) {
+            _opts = r._opts;
+            return this;
+        }
+        r._opts.insert(0, []);
+        return this * r;
+    }
+
+    function _add(r) {
+        r = _grammar.sym(r);
+        assert(r instanceof Rule);
+        if (_opts[0].len() == 0) return this;
+        local next = r._opts[0][0];
+        if (next._keep == null) {
+            next._keep = true;
+        }
+        return this * r;
+    }
+
+    function _unm() {
+        if (_opts[0].len() == 0) return this;
+        local next = _opts[0][0];
+        if (next._keep == null) {
+            next._keep = false;
+        }
+        return this;
+    }
+
+    function _sub(r) {
+        r = _grammar.sym(r);
+        assert(r instanceof Rule);
+        return this * (-r);
+    }
+
+}
+
+grammar <- Grammar(["b"]);
+grammar.rules(function() {
+    rule("a") / b * "a" * b;
+    discard([a, b]);
+    discard_strings();
+    discard_regexps();
+    no_discard_lookaheads();
+});
+grammar = grammar.compile();
+
+print(grammar);
+
+return;
 
 local grammarGrammar = { discarded={}, discardStrings=false, discardRegexps=false, rules={
     "grammar": [
