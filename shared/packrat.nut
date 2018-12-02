@@ -37,7 +37,6 @@ class Match {
         v = v_;
     }
 
-    // TODO make sure that all of these classes print properly
     function _serialize() {
         return { _match=true, t=t, s=s, l=l, v=v, nt=nt, alt=alt, n=n };
         // TODO?
@@ -323,21 +322,9 @@ class Symbol {
         return Symbol(SYMBOL_TYPE.BOOLEAN, false);
     }
 }
-// TODO change this binding
 S <- Symbol;
 
-// TODO implement drop as a unary minus metamethod on Symbol, then use it to
-// simplify grammarGrammar
-// extension: implement '-' for "concatenate, and drop this one", '+' for
-// "concatenate, and keep this one" and '/' for dividing options "next option".
-// These will need to operate between Symbols and arrays of symbols. * is
-// probably the best choice.  See if we can bindenv to `Symbol` so that we
-// don't have to put `Symbol.`s or `S.`s everywhere.  Make it like a DSL.  If
-// we declare our non-terminals we can even pre-instantiate (or use _get
-// metamethod on a delegate) in order to enable referecing non-terminals with
-// bare identifiers.  If we automatically convert strings with Symbol.str and
-// arrays with S.composite we will be balling
-// TODO ALSO!  implement chai's expect in Squirrel using this parser!  (or
+// TODO implement chai's expect in Squirrel using this parser!  (or
 // maybe an earley parser would be more suited?)  Each chained accessor can add
 // the key as a token to an internal array, then calling the chain (_call
 // metamethod) can cause it "compile" the tokens to assertions
@@ -489,10 +476,6 @@ class Rule {
         return this;
     }
 
-    function _mod(r) {
-        return this * r;
-    }
-
     function _div(r) {
         r = GrammarBuilder.sym(r);
         assert(r instanceof Rule);
@@ -504,7 +487,7 @@ class Rule {
         return this * r;
     }
 
-    function _add(r) {
+    function _keepcatenate(r) {
         r = GrammarBuilder.sym(r);
         assert(r instanceof Rule);
         if (_opts[0].len() == 0) return this;
@@ -513,6 +496,14 @@ class Rule {
             next._keep = true;
         }
         return this * r;
+    }
+
+    function _add(r) {
+      return _keepcatenate(r);
+    }
+
+    function _modulo(r) {
+      return _keepcatenate(r);
     }
 
     function _unm() {
@@ -542,16 +533,25 @@ function define_grammar(nts, fn=null) {
 }
 
 grammarGrammar <- define_grammar(function() {
-    rule("newline") / m(@"\s*\n(\n|\s)*");
-    rule("break_") / m(@"\s+");
-    rule("whitespace") / m(@"\s*");
-    rule("arrow") / whitespace * "<-" * whitespace;
-    rule("re") / "m/" * m("[^/]+") * "/";
-    rule("chars") / m(@"[^']*");
-    rule("string") / "'" * chars * "'";
-    rule("identifier") / rep([rule() / nla("m/") - nla("epsilon") * m("[a-zA-Z0-9_]")], 1);
+    // Some little helpers
+    rule("_")     / m(@"\s*");
+    rule("__")    / m(@"\s+");
+    rule("___")   / m(@"\s*\n(\n|\s)*");
+    rule("arrow") / _ * "<-" * _;
+
+    // Discard some matches that don't carry any information
+    discard_strings();
+    discard(___, __, _, arrow);
+
+    // Types of RHS symbols
+    rule("re")          / "m/" * m("[^/]+") * "/";
+    rule("chars")       / m(@"[^']*");
+    rule("string")      / "'" * chars * "'";
+    rule("identifier")  / rep([rule() / nla("m/") - nla("epsilon") * m(@"[a-zA-Z0-9_]")], 1);
     rule("nonterminal") / identifier;
-    rule("composite") / "(" * nt("ruleRhs") * ")" ;
+    rule("composite")   / "(" * nt("ruleRhs") * ")" ;
+
+    // Need to distinguish between repetitions and the rest of them
     rule("normalSymbol")
         / m(@"[+\-&!]") * nt("symbol")
         / nonterminal
@@ -559,38 +559,46 @@ grammarGrammar <- define_grammar(function() {
         / string
         / re;
     rule("repetition") / normalSymbol * m(@"[?*+]");
-    rule("idList") / identifier * rep([rule() / whitespace * "," * whitespace * identifier]);
-    rule("meta")
-        // TODO remember to s/break/break_/g
-        / "%" * "discard" * break_ * idList
-        / "%" * "discard_strings"
-        / "%" * "discard_regexps"
-        / "%" * "no_discard_lookaheads";
-    rule("symbol") / nla([ rule() / identifier * arrow / meta]) * [ rule() / repetition / normalSymbol ];
+
+    // RHS symbol
+    rule("symbol")
+        / nla([ rule() / identifier * arrow / nt("meta")])
+        * [ rule() / repetition / normalSymbol ];
+
+    // Rules
     rule("ruleOptionSuffix")
-        / break_ * symbol * nt("ruleOptionSuffix")
+        / __ * symbol * nt("ruleOptionSuffix")
         / epsilon;
     rule("ruleOption")
         / "epsilon"
         / symbol * ruleOptionSuffix;
     rule("ruleRhsSuffix")
-        / whitespace * "/" * whitespace * nt("ruleRhs")
+        / _ * "/" * _ * nt("ruleRhs")
         / epsilon;
-    rule("ruleRhs") / ruleOption * ruleRhsSuffix;
+    rule("ruleRhs")    / ruleOption * ruleRhsSuffix;
     rule("ruleSuffix") / arrow * ruleRhs;
-    // TODO s/rule_/rule/g
-    rule("rule_") / identifier * ruleSuffix;
-    rule("statement") / [ rule() / newline / START * whitespace ] * [ rule() / meta / rule_ ];
-    rule("grammar") / rep(statement) * whitespace;
+    rule("rule_")      / identifier * ruleSuffix;
+
+    // Meta commands
+    rule("idList") / identifier * rep([rule() / _ * "," * _ * identifier]);
+    rule("meta")
+        / "%" %"discard" * __ * idList
+        / "%" %"discard_strings"
+        / "%" %"discard_regexps"
+        / "%" %"no_discard_lookaheads";
+
+    // Grammar
+    rule("statement") / [ rule() / ___ / START * _ ] * [ rule() / meta / rule_ ];
+    rule("grammar")   / rep(statement) * _;
 });
 
 grammarActions <- {
     "whitespace": @(match) null,
     "chars": @(match) match.v[0].string,
-    "string": @(match) S.str(match.v[1].v),
+    "string": @(match) S.str(match.v[0].v),
     "nonterminal": @(match) S.nt(match.v[0].v),
-    "re": @(match) S.re(match.v[1].string),
-    "composite": @(match) S.composite(match.v[1].v),
+    "re": @(match) S.re(match.v[0].string),
+    "composite": @(match) S.composite(match.v[0].v),
     "repetition": function(match) {
         assert(typeof match.v == "array");
         assert(match.v.len() == 2);
@@ -633,8 +641,8 @@ grammarActions <- {
     "ruleOptionSuffix": function(match) {
         switch (match.alt) {
             case 0:
-                local sym = match.v[1].v;
-                local rest = match.v[2].v;
+                local sym = match.v[0].v;
+                local rest = match.v[1].v;
                 rest.insert(0, sym);
                 return rest;
             case 1:
@@ -652,19 +660,19 @@ grammarActions <- {
     "ruleRhsSuffix": function(match) {
         switch (match.alt) {
             case 0:
-                return match.v[3].v;
+                return match.v[0].v;
             case 1:
                 return [];
             default:
                 throw "unexpected";
         }
     },
-    "ruleSuffix": @(match) match.v[1].v,
+    "ruleSuffix": @(match) match.v[0].v,
     "identifier": @(match) join(match.v[0].v.map(@(sub) sub.v[0].string)),
     "rule_": @(match) [STATEMENT_TYPE.RULE, match.v[0].v, match.v[1].v]
     "idList": function(match) {
         local first = match.v[0].v;
-        local rest = match.v[1].v.map(@(m) m.v[3].v);
+        local rest = match.v[1].v.map(@(m) m.v[0].v);
         rest.insert(0, first);
         return rest;
     },
@@ -674,11 +682,11 @@ grammarActions <- {
             discard_strings       = STATEMENT_TYPE.DISCARD_STRINGS,
             discard_regexps       = STATEMENT_TYPE.DISCARD_REGEXPS,
             no_discard_lookaheads = STATEMENT_TYPE.NO_DISCARD_LOOKAHEADS,
-        }[match.v[1].string];
+        }[match.v[0].string];
         local info = [type];
 
         if (match.alt == 0) {
-            local ids = match.v[3].v;
+            local ids = match.v[1].v;
             info.push(ids);
         }
 
