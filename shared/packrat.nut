@@ -324,7 +324,7 @@ class Symbol {
     }
 }
 // TODO change this binding
-F <- Symbol;
+S <- Symbol;
 
 // TODO implement drop as a unary minus metamethod on Symbol, then use it to
 // simplify grammarGrammar
@@ -332,11 +332,11 @@ F <- Symbol;
 // "concatenate, and keep this one" and '/' for dividing options "next option".
 // These will need to operate between Symbols and arrays of symbols. * is
 // probably the best choice.  See if we can bindenv to `Symbol` so that we
-// don't have to put `Symbol.`s or `F.`s everywhere.  Make it like a DSL.  If
+// don't have to put `Symbol.`s or `S.`s everywhere.  Make it like a DSL.  If
 // we declare our non-terminals we can even pre-instantiate (or use _get
 // metamethod on a delegate) in order to enable referecing non-terminals with
 // bare identifiers.  If we automatically convert strings with Symbol.str and
-// arrays with F.composite we will be balling
+// arrays with S.composite we will be balling
 // TODO ALSO!  implement chai's expect in Squirrel using this parser!  (or
 // maybe an earley parser would be more suited?)  Each chained accessor can add
 // the key as a token to an internal array, then calling the chain (_call
@@ -360,7 +360,7 @@ class GrammarBuilder {
             m=Symbol.re,
         };
         foreach (nt in nts) {
-            _env[nt] <- ::F.nt(nt);
+            _env[nt] <- ::S.nt(nt);
         }
         _compiled = { discarded = {}, rules = {} };
     }
@@ -420,7 +420,7 @@ class GrammarBuilder {
         rule._opts = null;
         if (typeof name == "string") {
             _rules.push(rule);
-            _env[name] <- ::F.nt(name);
+            _env[name] <- ::S.nt(name);
         }
         return rule;
     }
@@ -432,9 +432,9 @@ class GrammarBuilder {
             return ::Rule();
         } else if (typeof from == "array") {
             assert(from[0] instanceof Rule);
-            return ::Rule([[::F.composite(from[0]._opts)]]);
+            return ::Rule([[::S.composite(from[0]._opts)]]);
         } else if (typeof from == "string") {
-            return ::Rule([[::F.str(from)]]);
+            return ::Rule([[::S.str(from)]]);
         } else if (from instanceof Symbol) {
             return ::Rule([[from]]);
         } else {
@@ -524,101 +524,101 @@ return;
 
 local grammarGrammar = { discarded={}, discardStrings=false, discardRegexps=false, rules={
     "grammar": [
-        [F.rep(F.nt("statement")), F.nt("whitespace")],
+        [S.rep(S.nt("statement")), S.nt("whitespace")],
     ],
     "statement": [
-        [F.composite([[F.nt("newline")], [F.start(), F.nt("whitespace")] ]), F.composite([ [F.nt("meta")], [ F.nt("rule") ] ])],
+        [S.composite([[S.nt("newline")], [S.start(), S.nt("whitespace")] ]), S.composite([ [S.nt("meta")], [ S.nt("rule") ] ])],
     ],
     "meta": [
-        [F.str("%"), F.str("discard"), F.nt("break"), F.nt("idList")],
-        [F.str("%"), F.str("discard_strings")],
-        [F.str("%"), F.str("discard_regexps")],
-        [F.str("%"), F.str("no_discard_lookaheads")],
+        [S.str("%"), S.str("discard"), S.nt("break"), S.nt("idList")],
+        [S.str("%"), S.str("discard_strings")],
+        [S.str("%"), S.str("discard_regexps")],
+        [S.str("%"), S.str("no_discard_lookaheads")],
     ],
     "idList": [
-        [F.nt("identifier"), F.rep(F.composite([[F.nt("whitespace"), F.str(","), F.nt("whitespace"), F.nt("identifier")]]))],
+        [S.nt("identifier"), S.rep(S.composite([[S.nt("whitespace"), S.str(","), S.nt("whitespace"), S.nt("identifier")]]))],
     ],
     "identifier": [
-        [F.rep(F.composite([ [F.nla(F.str("m/")), drop(F.nla(F.str("epsilon"))), F.re("[a-zA-Z0-9_]")] ]), 1)],
+        [S.rep(S.composite([ [S.nla(S.str("m/")), drop(S.nla(S.str("epsilon"))), S.re("[a-zA-Z0-9_]")] ]), 1)],
     ],
     "arrow": [
-        [F.nt("whitespace"), F.str("<-"), F.nt("whitespace")],
+        [S.nt("whitespace"), S.str("<-"), S.nt("whitespace")],
     ],
     "rule": [
-        [F.nt("identifier"), F.nt("ruleSuffix")],
+        [S.nt("identifier"), S.nt("ruleSuffix")],
     ],
     "ruleSuffix": [
-        [F.nt("arrow"), F.nt("ruleRhs") ],
+        [S.nt("arrow"), S.nt("ruleRhs") ],
     ],
     "ruleRhs": [
-        [F.nt("ruleOption"), F.nt("ruleRhsSuffix")],
+        [S.nt("ruleOption"), S.nt("ruleRhsSuffix")],
     ],
     "ruleRhsSuffix": [
-        [F.nt("whitespace"), F.str("/"), F.nt("whitespace"), F.nt("ruleRhs")],
+        [S.nt("whitespace"), S.str("/"), S.nt("whitespace"), S.nt("ruleRhs")],
         [],
     ],
     "ruleOption": [
-        [F.str("epsilon")],
-        [F.nt("symbol"), F.nt("ruleOptionSuffix")],
+        [S.str("epsilon")],
+        [S.nt("symbol"), S.nt("ruleOptionSuffix")],
     ],
     "ruleOptionSuffix": [
-        [F.nt("break"), F.nt("symbol"), F.nt("ruleOptionSuffix")],
+        [S.nt("break"), S.nt("symbol"), S.nt("ruleOptionSuffix")],
         [],
     ],
     "symbol": [
         [
-            F.nla(F.composite([ [F.nt("identifier"), F.nt("arrow")], [F.nt("meta")] ])),
-            F.composite([
-                    [F.nt("repetition")],
-                    [F.nt("normalSymbol")],
+            S.nla(S.composite([ [S.nt("identifier"), S.nt("arrow")], [S.nt("meta")] ])),
+            S.composite([
+                    [S.nt("repetition")],
+                    [S.nt("normalSymbol")],
             ]),
         ],
     ],
     "normalSymbol": [
         // the first case covers special markup for lookaheads, etc.
-        [F.re(@"[+\-&!]"), F.nt("symbol")],
-        [F.nt("nonterminal")],
-        [F.nt("composite")],
-        [F.nt("string")],
-        [F.nt("re")],
+        [S.re(@"[+\-&!]"), S.nt("symbol")],
+        [S.nt("nonterminal")],
+        [S.nt("composite")],
+        [S.nt("string")],
+        [S.nt("re")],
     ],
     "repetition": [
         // TODO specific number of repetitions?
-        [F.nt("normalSymbol"), F.re(@"[?*+]")],
+        [S.nt("normalSymbol"), S.re(@"[?*+]")],
     ],
     "composite": [
-        [F.str("("), F.nt("ruleRhs"), F.str(")")],
+        [S.str("("), S.nt("ruleRhs"), S.str(")")],
     ],
     "nonterminal": [
-        [F.nt("identifier")],
+        [S.nt("identifier")],
     ],
     "string": [
-        [F.str("'"), F.nt("chars"), F.str("'")],
+        [S.str("'"), S.nt("chars"), S.str("'")],
     ],
     "chars": [
-        [F.re(@"[^']*")],
+        [S.re(@"[^']*")],
     ],
     "re": [
-        [F.str("m/"), F.re("[^/]+"), F.str("/")],
+        [S.str("m/"), S.re("[^/]+"), S.str("/")],
     ],
     "whitespace": [
-        [F.re(@"\s*")],
+        [S.re(@"\s*")],
     ],
     "break": [
-        [F.re(@"\s+")],
+        [S.re(@"\s+")],
     ],
     "newline": [
-        [F.re(@"\s*\n(\n|\s)*")],
+        [S.re(@"\s*\n(\n|\s)*")],
     ],
 }};
 
 grammarActions <- {
     "whitespace": @(match) null,
     "chars": @(match) match.v[0].string,
-    "string": @(match) F.str(match.v[1].v),
-    "nonterminal": @(match) F.nt(match.v[0].v),
-    "re": @(match) F.re(match.v[1].string),
-    "composite": @(match) F.composite(match.v[1].v),
+    "string": @(match) S.str(match.v[1].v),
+    "nonterminal": @(match) S.nt(match.v[0].v),
+    "re": @(match) S.re(match.v[1].string),
+    "composite": @(match) S.composite(match.v[1].v),
     "repetition": function(match) {
         assert(typeof match.v == "array");
         assert(match.v.len() == 2);
@@ -626,7 +626,7 @@ grammarActions <- {
         local sym = match.v[0].v;
         local repChar = match.v[1].string;
         local times = { "?": [0, 1], "*": [0, null], "+": [1, null] }[repChar];
-        return F.rep(sym, times[0], times[1]);
+        return S.rep(sym, times[0], times[1]);
     },
     "symbol": function(match) {
         local composite = match.v[0];
@@ -641,8 +641,8 @@ grammarActions <- {
             return {
                 "+": @() drop(sym, false),
                 "-": @() drop(sym),
-                "&": @() F.la(sym),
-                "!": @() F.nla(sym),
+                "&": @() S.la(sym),
+                "!": @() S.nla(sym),
             }[match.v[0].string]();
         } else {
             return sym;
