@@ -18,6 +18,8 @@ Packrat.grammarGrammar <- Packrat.buildGrammar(function() {
     discard(___, __, _, arrow);
 
     // Types of RHS symbols
+    // TODO make matching better for re and chars, so that they can include "/"
+    // and "'"
     rule("re")          / "m/" * m("[^/]+") * "/";
     rule("chars")       / m(@"[^']*");
     rule("string")      / "'" * chars * "'";

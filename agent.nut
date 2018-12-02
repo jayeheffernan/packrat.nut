@@ -3,22 +3,7 @@
 @include "./grammar_builder.nut"
 @include "./grammar.grammar.nut"
 
-rules <- @"
-document  <-  __ (object / array) __
-object    <-  '{' pair (-',' pair)* '}' / '{' __ '}'
-pair      <-  __ string __ ':' value
-array     <-  '[' value (-',' value)* ']' / '[' __ ']'
-value     <-  __ (object / array / string / number / boolean_ / null_) __
-string    <-  '""' (-'\' +m/./ / +m/[^""]/)* '""'
-number    <-  '-'? ('0' / m/[1-9][0-9]*/) ('.' m/[0-9]+/)? (('e' / 'E') ('+' / '-' / '') m/[0-9]+/)?
-boolean_  <-  'true' / 'false'
-null_     <-  'null'
-__        <-  m/\s*/
-%discard __
-%discard_strings
-%discard_regexps
-";
-
+// A utility function we'll use later
 // Join an array of things into a string, separated by sep
 function join(arr, sep="") {
     if (arr.len() == 0)
@@ -30,6 +15,25 @@ function join(arr, sep="") {
     return s;
 }
 
+// Define our JSON grammar
+rules <- @"
+document  <-  __ (object / array) __
+object    <-  '{' pair (-',' pair)* '}' / '{' __ '}'
+pair      <-  __ string __ ':' value
+array     <-  '[' value (-',' value)* ']' / '[' __ ']'
+value     <-  __ (object / array / string / number / boolean_ / null_) __
+string    <-  '""' (-'\' +m/./ / +m/[^""]/)* '""'
+number    <-  '-'? ('0' / m/[1-9][0-9]*/) ('.' m/[0-9]+/)? (('e' / 'E') ('+' / '-' / '') m/[0-9]+/)?
+boolean_  <-  'true' / 'false'
+null_     <-  'null'
+__        <-  m/\s*/
+
+%discard __
+%discard_strings
+%discard_regexps
+";
+
+// Define our JSON parsing actions
 actions <- {
     "null_": @(match) null,
     "boolean_": @(match) match.alt == 0 ? true : false,
@@ -82,8 +86,13 @@ actions <- {
     "document": @(match) match.v[0].v[0].v,
 };
 
+// Import our JSON to a string
 input <- "@{include('input.json')|escape}";
+// Specifying the starting rule
 start <- "document";
 
+// Parse the JSON
 result <- Packrat.parse(start, input, rules, actions);
-server.log("output:" + pformat(result.type));
+// The JSON has a "type" field at the top level, set to "FeatureCollection",
+// which we log
+server.log("output:" + result.type);
