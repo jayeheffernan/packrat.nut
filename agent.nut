@@ -1,36 +1,7 @@
 @include "./libs/PrettyPrinter.nut"
-@include "./libs/utils.nut"
-@include "./shared/packrat.nut"
-
-// Define our grammar
-grammar <-  @"
-additive        <- multitive additiveSuffix?
-additiveSuffix  <- '+' additive
-multitive       <- number multitiveSuffix?
-multitiveSuffix <- ('*' / 'x') multitive
-number          <- m/\d+/
-";
-start <- "additive";
-
-// Define our actions
-actions <- {
-    "number": @(match) match.v[0].tointeger(),
-    "multitiveSuffix": @(match) match.v[1].v,
-    "multitive": function(match) {
-        local num = match.v[0].v;
-        local suffixes = match.v[1].v;
-        return num * (suffixes.len() ? suffixes[0].v : 1);
-    },
-    "additiveSuffix": @(match) match.v[1].v,
-    "additive": function(match) {
-        local num = match.v[0].v;
-        local suffixes = match.v[1].v;
-        return num + (suffixes.len() ? suffixes[0].v : 0);
-    },
-};
-
-// Attempt to parse an a value from our input
-input <- "1*2+3*4+5";
+@include "./Packrat.class.nut"
+@include "./grammar_builder.nut"
+@include "./grammar.grammar.nut"
 
 rules <- @"
 document  <-  __ (object / array) __
@@ -48,8 +19,19 @@ __        <-  m/\s*/
 %discard_regexps
 ";
 
+// Join an array of things into a string, separated by sep
+function join(arr, sep="") {
+    if (arr.len() == 0)
+        return "";
+    local s = "" + arr[0];
+    for (local i = 1; i < arr.len(); i++) {
+        s += sep + arr[i];
+    }
+    return s;
+}
+
 actions <- {
-    "null_": @(match) null, // this time we actually want the value `null`
+    "null_": @(match) null,
     "boolean_": @(match) match.alt == 0 ? true : false,
     "number": @(match) match.string.tofloat(),
     // TODO: does not support unicode escape sequences (probably)
@@ -103,5 +85,5 @@ actions <- {
 input <- "@{include('input.json')|escape}";
 start <- "document";
 
-result <- parse(start, input, rules, actions, false);
+result <- Packrat.parse(start, input, rules, actions);
 server.log("output:" + pformat(result.type));
