@@ -346,7 +346,7 @@ function drop(symbol, drop=true) {
     return symbol;
 }
 
-class Grammar {
+class GrammarBuilder {
     _rules = null;
     _env = null;
     _compiled = null;
@@ -355,8 +355,7 @@ class Grammar {
         _rules = [];
         nts = nts || [];
         _env = {
-            s=sym,
-            r=rule,
+            s=rule,
             epsilon=::Rule(this),
             m=Symbol.re,
         };
@@ -391,6 +390,7 @@ class Grammar {
     }
     function rules(fn) {
         fn.bindenv(this)();
+        return this;
     }
 
     function _get(idx) {
@@ -400,8 +400,8 @@ class Grammar {
 
     function compile() {
         foreach (rule in _rules) {
-            if (!rule._lhs in grammar.rules) rules[rule._lhs] <- [];
-            if (rule._lhs in grammar.rules) {
+            if (!rule._lhs in _compiled.rules) rules[rule._lhs] <- [];
+            if (rule._lhs in _compiled.rules) {
                 _compiled.rules[rule._lhs].extend(rule._opts);
             } else {
                 _compiled.rules[rule._lhs] <- rule._opts;
@@ -410,17 +410,18 @@ class Grammar {
         return _compiled;
     }
 
-    static function rule(name) {
+    static function rule(name=null) {
         if (name instanceof Symbol) {
             assert(name.t == SYMBOL_TYPE.NT);
             name = name.v;
         }
-        assert(typeof name == "string");
-        local rule = ::Rule(this);
+        local rule = ::Rule();
         rule._lhs = name;
         rule._opts = null;
-        _rules.push(rule);
-        _env[name] <- ::F.nt(name);
+        if (typeof name == "string") {
+            _rules.push(rule);
+            _env[name] <- ::F.nt(name);
+        }
         return rule;
     }
 
@@ -428,13 +429,14 @@ class Grammar {
         if (from instanceof ::Rule) {
             return from;
         } else if (from == null) {
-            return ::Rule(this);
+            return ::Rule();
         } else if (typeof from == "array") {
-            return ::Rule(this, [[::F.composite(from)]]);
+            assert(from[0] instanceof Rule);
+            return ::Rule([[::F.composite(from[0]._opts)]]);
         } else if (typeof from == "string") {
-            return ::Rule(this, [[::F.str(from)]]);
+            return ::Rule([[::F.str(from)]]);
         } else if (from instanceof Symbol) {
-            return ::Rule(this, [[from]]);
+            return ::Rule([[from]]);
         } else {
             throw "can't convert: " + typeof from + ": " + from;
         }
@@ -442,17 +444,15 @@ class Grammar {
 }
 
 class Rule {
-    _grammar = null;
     _lhs = null;
     _opts = null;
 
-    constructor(grammar, opts = null) {
-        _grammar = grammar;
+    constructor(opts = null) {
         _opts = opts || [[]];
     }
 
     function _mul(r) {
-        r = _grammar.sym(r);
+        r = GrammarBuilder.sym(r);
         assert(r instanceof Rule);
         _opts[_opts.len()-1].extend(r._opts[0]);
         for (local i = 1; i < r._opts.len(); i++) {
@@ -467,7 +467,7 @@ class Rule {
     }
 
     function _div(r) {
-        r = _grammar.sym(r);
+        r = GrammarBuilder.sym(r);
         assert(r instanceof Rule);
         if (!_opts) {
             _opts = r._opts;
@@ -478,7 +478,7 @@ class Rule {
     }
 
     function _add(r) {
-        r = _grammar.sym(r);
+        r = GrammarBuilder.sym(r);
         assert(r instanceof Rule);
         if (_opts[0].len() == 0) return this;
         local next = r._opts[0][0];
@@ -498,22 +498,25 @@ class Rule {
     }
 
     function _sub(r) {
-        r = _grammar.sym(r);
+        r = GrammarBuilder.sym(r);
         assert(r instanceof Rule);
         return this * (-r);
     }
 
 }
 
-grammar <- Grammar(["b"]);
-grammar.rules(function() {
-    rule("a") / b * "a" * b;
-    discard([a, b]);
-    discard_strings();
-    discard_regexps();
-    no_discard_lookaheads();
+function define_grammar(nts, fn=null) {
+    if (fn == null) {
+        fn = nts;
+        nts = [];
+    }
+    assert(typeof fn == "function");
+    return GrammarBuilder(nts).rules(fn).compile();
+}
+
+grammar <- define_grammar(["b"], function() {
+    rule("a") / "a" * [ rule() / "b" * [ rule() / "d" / "e" ] * "f"] * "z";
 });
-grammar = grammar.compile();
 
 print(grammar);
 
