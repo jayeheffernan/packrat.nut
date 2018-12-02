@@ -356,13 +356,16 @@ class GrammarBuilder {
         nts = nts || [];
         _env = {
             s=rule,
-            epsilon=::Rule(this),
+            epsilon=::Rule(),
             m=Symbol.re,
+            nt=Symbol.nt,
+            START=Symbol.start(),
+            END=Symbol.end(),
         };
         foreach (nt in nts) {
             _env[nt] <- ::S.nt(nt);
         }
-        _compiled = { discarded = {}, rules = {} };
+        _compiled = { discarded = {}, rules = {}, discardStrings=false, discardRegexps=false, noDiscardLookaheads=false };
     }
 
     function discard(...) {
@@ -375,6 +378,30 @@ class GrammarBuilder {
                 _compiled.discarded[typeof nt == "string" ? nt : nt.v] <- true;
             }
         }
+    }
+
+    static function rep(r, low=0, high=null) {
+        r = GrammarBuilder.sym(r);
+        assert(r instanceof Rule);
+        assert(r._opts.len() == 1);
+        assert(r._opts[0].len() == 1);
+        return sym(Symbol.rep(r._opts[0][0], low, high));
+    }
+
+    static function nla(r) {
+        r = GrammarBuilder.sym(r);
+        assert(r instanceof Rule);
+        assert(r._opts.len() == 1);
+        assert(r._opts[0].len() == 1);
+        return sym(Symbol.nla(r._opts[0][0]));
+    }
+
+    static function la(r) {
+        r = GrammarBuilder.sym(r);
+        assert(r instanceof Rule);
+        assert(r._opts.len() == 1);
+        assert(r._opts[0].len() == 1);
+        return sym(Symbol.la(r._opts[0][0]));
     }
 
     function discard_strings() {
@@ -514,103 +541,48 @@ function define_grammar(nts, fn=null) {
     return GrammarBuilder(nts).rules(fn).compile();
 }
 
-grammar <- define_grammar(["b"], function() {
-    rule("a") / "a" * [ rule() / "b" * [ rule() / "d" / "e" ] * "f"] * "z";
+grammarGrammar <- define_grammar(function() {
+    rule("newline") / m(@"\s*\n(\n|\s)*");
+    rule("break_") / m(@"\s+");
+    rule("whitespace") / m(@"\s*");
+    rule("arrow") / whitespace * "<-" * whitespace;
+    rule("re") / "m/" * m("[^/]+") * "/";
+    rule("chars") / m(@"[^']*");
+    rule("string") / "'" * chars * "'";
+    rule("identifier") / rep([rule() / nla("m/") - nla("epsilon") * m("[a-zA-Z0-9_]")], 1);
+    rule("nonterminal") / identifier;
+    rule("composite") / "(" * nt("ruleRhs") * ")" ;
+    rule("normalSymbol")
+        / m(@"[+\-&!]") * nt("symbol")
+        / nonterminal
+        / composite
+        / string
+        / re;
+    rule("repetition") / normalSymbol * m(@"[?*+]");
+    rule("idList") / identifier * rep([rule() / whitespace * "," * whitespace * identifier]);
+    rule("meta")
+        // TODO remember to s/break/break_/g
+        / "%" * "discard" * break_ * idList
+        / "%" * "discard_strings"
+        / "%" * "discard_regexps"
+        / "%" * "no_discard_lookaheads";
+    rule("symbol") / nla([ rule() / identifier * arrow / meta]) * [ rule() / repetition / normalSymbol ];
+    rule("ruleOptionSuffix")
+        / break_ * symbol * nt("ruleOptionSuffix")
+        / epsilon;
+    rule("ruleOption")
+        / "epsilon"
+        / symbol * ruleOptionSuffix;
+    rule("ruleRhsSuffix")
+        / whitespace * "/" * whitespace * nt("ruleRhs")
+        / epsilon;
+    rule("ruleRhs") / ruleOption * ruleRhsSuffix;
+    rule("ruleSuffix") / arrow * ruleRhs;
+    // TODO s/rule_/rule/g
+    rule("rule_") / identifier * ruleSuffix;
+    rule("statement") / [ rule() / newline / START * whitespace ] * [ rule() / meta / rule_ ];
+    rule("grammar") / rep(statement) * whitespace;
 });
-
-print(grammar);
-
-return;
-
-local grammarGrammar = { discarded={}, discardStrings=false, discardRegexps=false, rules={
-    "grammar": [
-        [S.rep(S.nt("statement")), S.nt("whitespace")],
-    ],
-    "statement": [
-        [S.composite([[S.nt("newline")], [S.start(), S.nt("whitespace")] ]), S.composite([ [S.nt("meta")], [ S.nt("rule") ] ])],
-    ],
-    "meta": [
-        [S.str("%"), S.str("discard"), S.nt("break"), S.nt("idList")],
-        [S.str("%"), S.str("discard_strings")],
-        [S.str("%"), S.str("discard_regexps")],
-        [S.str("%"), S.str("no_discard_lookaheads")],
-    ],
-    "idList": [
-        [S.nt("identifier"), S.rep(S.composite([[S.nt("whitespace"), S.str(","), S.nt("whitespace"), S.nt("identifier")]]))],
-    ],
-    "identifier": [
-        [S.rep(S.composite([ [S.nla(S.str("m/")), drop(S.nla(S.str("epsilon"))), S.re("[a-zA-Z0-9_]")] ]), 1)],
-    ],
-    "arrow": [
-        [S.nt("whitespace"), S.str("<-"), S.nt("whitespace")],
-    ],
-    "rule": [
-        [S.nt("identifier"), S.nt("ruleSuffix")],
-    ],
-    "ruleSuffix": [
-        [S.nt("arrow"), S.nt("ruleRhs") ],
-    ],
-    "ruleRhs": [
-        [S.nt("ruleOption"), S.nt("ruleRhsSuffix")],
-    ],
-    "ruleRhsSuffix": [
-        [S.nt("whitespace"), S.str("/"), S.nt("whitespace"), S.nt("ruleRhs")],
-        [],
-    ],
-    "ruleOption": [
-        [S.str("epsilon")],
-        [S.nt("symbol"), S.nt("ruleOptionSuffix")],
-    ],
-    "ruleOptionSuffix": [
-        [S.nt("break"), S.nt("symbol"), S.nt("ruleOptionSuffix")],
-        [],
-    ],
-    "symbol": [
-        [
-            S.nla(S.composite([ [S.nt("identifier"), S.nt("arrow")], [S.nt("meta")] ])),
-            S.composite([
-                    [S.nt("repetition")],
-                    [S.nt("normalSymbol")],
-            ]),
-        ],
-    ],
-    "normalSymbol": [
-        // the first case covers special markup for lookaheads, etc.
-        [S.re(@"[+\-&!]"), S.nt("symbol")],
-        [S.nt("nonterminal")],
-        [S.nt("composite")],
-        [S.nt("string")],
-        [S.nt("re")],
-    ],
-    "repetition": [
-        // TODO specific number of repetitions?
-        [S.nt("normalSymbol"), S.re(@"[?*+]")],
-    ],
-    "composite": [
-        [S.str("("), S.nt("ruleRhs"), S.str(")")],
-    ],
-    "nonterminal": [
-        [S.nt("identifier")],
-    ],
-    "string": [
-        [S.str("'"), S.nt("chars"), S.str("'")],
-    ],
-    "chars": [
-        [S.re(@"[^']*")],
-    ],
-    "re": [
-        [S.str("m/"), S.re("[^/]+"), S.str("/")],
-    ],
-    "whitespace": [
-        [S.re(@"\s*")],
-    ],
-    "break": [
-        [S.re(@"\s+")],
-    ],
-    "newline": [
-        [S.re(@"\s*\n(\n|\s)*")],
-    ],
-}};
 
 grammarActions <- {
     "whitespace": @(match) null,
@@ -689,7 +661,7 @@ grammarActions <- {
     },
     "ruleSuffix": @(match) match.v[1].v,
     "identifier": @(match) join(match.v[0].v.map(@(sub) sub.v[0].string)),
-    "rule": @(match) [STATEMENT_TYPE.RULE, match.v[0].v, match.v[1].v]
+    "rule_": @(match) [STATEMENT_TYPE.RULE, match.v[0].v, match.v[1].v]
     "idList": function(match) {
         local first = match.v[0].v;
         local rest = match.v[1].v.map(@(m) m.v[3].v);

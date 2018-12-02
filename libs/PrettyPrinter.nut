@@ -117,6 +117,10 @@ class JSONEncoder {
 
         break;
 
+      case "meta":
+        r += "\"@meta\"";
+        break;
+
       // strings and all other
       default:
         r += "\"" + this._escape(val.tostring()) + "\"";
